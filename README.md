@@ -1,12 +1,34 @@
-# 红果短剧 Switch 1.1.1 修复版
+# 红果短剧 Switch 1.1.2 正式版
 
-本次以用户提供的 Phone/TV 案例重做核心目录、搜索、详情、取流、下载和首页布局。真实视频音轨与视频轨已通过 15 秒解码测试；Switch 实机与所有剧集的可用性仍需验证。
+用户已于 2026-10-18 确认 **1.1.2 实机通过**。正式版沿用已测试的程序内容，安装包与交付测试版一致。
 
-1.1.1 修复 HEIC / WebP 封面解码，并对照参考项目 `app-v0.1.17-42` 修正媒体接口：该接口不再附加旧版签名头，沿用详情返回的 `content_type`；目录等接口仍保留签名。旧 `source=app158/web` 配置统一使用新适配器，避免仍被旧配置限制到官网前几集。封面失败最多重试三次。修复原生 AES-CTR 分段状态，并用独立视频帧缓冲交由 NanoVG 统一合成画面。
+[下载 NSP](https://github.com/zqzhuhai-commits/hongguo-switch/releases/download/v1.1.2/Hongguo-Switch-1.1.2.nsp) · [完整安装包](https://github.com/zqzhuhai-commits/hongguo-switch/releases/download/v1.1.2/Hongguo-Switch-1.1.2-Install.zip) · [正式发布说明](https://github.com/zqzhuhai-commits/hongguo-switch/releases/tag/v1.1.2) · [全部界面截图](https://github.com/zqzhuhai-commits/hongguo-switch/releases/download/v1.1.2/Hongguo-Switch-1.1.2-UI-Screenshots.zip)
 
-NSP 打包要求同一提交的第 1、4、10、31 集各通过 15 秒音视频解码，且四张真实封面经原生图片解码器通过。播放测试使用生产 Buffer/crypto 适配层；原生播放器有/无菜单均须通过连续可见视频画面检查。新增线上首页、分类、详情和第 31 集播放器桌面截图；Switch 实机仍需验证。
+## 本版功能与修复
 
-[本次修改](https://github.com/zqzhuhai-commits/hongguo-switch/pull/1) · [构建和测试](https://github.com/zqzhuhai-commits/hongguo-switch/actions)
+- 修复 HEIC / WebP 封面、后续集数取流、分段解密与视频画面合成。
+- 首页「设置」与播放菜单「播放设置」支持硬解优先 / 软件解码、MPV 标准 / 兼容模式、下一集预加载、自动连播；选择后自动保存，返回播放保留进度和暂停状态。
+- 播放器使用异步控制，避免同步操作阻塞渲染。
+- 支持分类搜索、选集、画质、倍速、横竖切换、进度拖动、下载、收藏及观看记录。
+
+两种播放模式均使用 MPV；兼容模式关闭直接渲染并使用 32 MiB 缓冲，目前尚无第二播放器内核。所有旧 source 配置统一使用新版 Phone 适配器，无需手动改片源。
+
+![首页](docs/images/1.1.2/home.png)
+![播放设置](docs/images/1.1.2/settings.png)
+
+以上为与 Switch 共用的原生界面在桌面运行的截图，非实机截屏。
+
+## 验证与安装
+
+用户确认实机通过。自动检查通过：9 组协议 / 媒体回归、原生配置 / 策略 / 队列 / 图像检查及 Switch 构建；《首辅娇娘》第 1 / 4 / 10 / 31 集各约 15 秒、375 帧真实音视频解码，4 张 HEIC 封面，以及有 / 无播放菜单各 3/3 连续可见画面并确认帧变化。
+
+[对应构建与测试](https://github.com/zqzhuhai-commits/hongguo-switch/actions/runs/39098142309) · [验证记录](dist/formal-1.1.2/verification.json)
+
+直接安装 NSP，或将 NRO 放入 SD 卡 switch 目录，从完整内存模式启动。设置保存在 `switch/hongguo.cfg`，本机记录位于 `switch/hongguo-saf/`。Title ID 为 `0100F00D53414600`。内容源可用性受服务端及网络影响。
+
+## 历史实现记录
+
+以下保留早期版本及开发阶段的说明；其中当时的测试状态、片源切换方式与截图布局不代表当前版本，当前结果以上文和 1.1.2 发布说明为准。
 
 ## 1.0.0 正式版历史记录
 
@@ -95,4 +117,4 @@ g++ -std=c++17 -Inative tests/app_config.cpp -o /tmp/config && /tmp/config
 - MPV 标准模式：16 MiB 缓冲、启用直接渲染。
 - MPV 兼容模式：32 MiB 缓冲、关闭直接渲染，可用于排查黑屏或花屏。
 
-目前只集成 MPV 内核，这两个模式不是不同播放器内核，尚未集成 VLC 等第二内核。Switch 硬解切换仍需实机验证。
+目前只集成 MPV 内核，这两个模式不是不同播放器内核，尚未集成 VLC 等第二内核。用户已确认 1.1.2 实机通过。

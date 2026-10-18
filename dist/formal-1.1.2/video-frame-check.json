@@ -1,0 +1,49 @@
+{
+  "screens": {
+    "player": {
+      "displayPassed": true,
+      "frames": [
+        {
+          "frame": 1,
+          "visibleFraction": 0.6370637119113574,
+          "passed": true
+        },
+        {
+          "frame": 2,
+          "visibleFraction": 0.9090027700831025,
+          "passed": true
+        },
+        {
+          "frame": 3,
+          "visibleFraction": 0.8850277008310249,
+          "passed": true
+        }
+      ],
+      "motionConfirmed": true
+    },
+    "player-menu": {
+      "displayPassed": true,
+      "frames": [
+        {
+          "frame": 1,
+          "visibleFraction": 0.8195013850415512,
+          "passed": true
+        },
+        {
+          "frame": 2,
+          "visibleFraction": 0.9198614958448753,
+          "passed": true
+        },
+        {
+          "frame": 3,
+          "visibleFraction": 0.823781163434903,
+          "passed": true
+        }
+      ],
+      "motionConfirmed": true
+    }
+  },
+  "commit": "71197015f64aa191b6d7b476213116d0b7ca09d7",
+  "displayPassed": true,
+  "hardwareTested": false
+}

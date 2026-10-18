@@ -79,6 +79,41 @@ static std::mutex playbackErrorMutex;
 static std::string playbackErrorId,playbackError;
 class SceneFrame:public brls::AppletFrame {public:explicit SceneFrame(brls::View* root):brls::AppletFrame(root){}std::shared_ptr<std::atomic<bool>> alive=std::make_shared<std::atomic<bool>>(true);~SceneFrame(){*alive=false;}};
 static SceneFrame* frame(brls::Box* list,const std::string& title){auto* scroll=new brls::ScrollingFrame();scroll->setGrow(1);list->setPadding(20,50,30,50);scroll->setContentView(list);auto* f=new SceneFrame(scroll);f->setTitle(title);return f;}
+// Persist each selection immediately; closing from playback applies all changes once.
+static std::string decoderLabel(const AppConfig& config){auto mode=config.decoder();return mode=="no"?"软件解码（CPU）":mode=="auto"?"硬解优先（自动回退软解）":"硬件解码（旧配置）";}
+static std::string profileLabel(const AppConfig& config){return config.profile()=="compatible"?"MPV · 兼容模式":"MPV · 标准模式";}
+static void openSettings(std::function<void()> onClose={},const std::string& preview=""){
+  auto* list=new brls::Box(brls::Axis::COLUMN);auto* page=frame(list,"播放设置");auto flag=page->alive;
+  auto settingRow=[](const std::string& title,const std::string& value){auto* row=new brls::DetailCell();row->setText(title);row->setDetailText(value);row->addGestureRecognizer(new brls::TapGestureRecognizer(row));return row;};
+  auto* decoder=settingRow("解码方式",decoderLabel(AppConfig::load()));
+  auto* profile=settingRow("播放器模式",profileLabel(AppConfig::load()));
+  auto* preload=settingRow("下一集预加载",AppConfig::load().prefetch()?"开启":"关闭");
+  auto* autoplay=settingRow("自动连播",AppConfig::load().continuous()?"开启":"关闭");
+  auto choose=[flag](const std::string& title,const std::string& key,const std::vector<std::pair<std::string,std::string>>& options,brls::DetailCell* target){
+    auto* choices=new brls::Box(brls::Axis::COLUMN);auto* picker=frame(choices,title);back(picker);
+    const auto current=AppConfig::load().get(key,"");
+    for(const auto& option:options){const auto value=option.first,label=option.second;choices->addView(cell(label,current==value?"已选择":"按 A 或触摸选择",[flag,key,value,label,target]{
+      if(!*flag)return;auto config=AppConfig::load();config.values[key]=value;
+      if(!config.save()){message("设置保存失败，请检查 SD 卡空间和写入权限。");return;}
+      target->setDetailText(label);brls::Application::popActivity();
+    }));}
+    brls::Application::pushActivity(new brls::Activity(picker));
+  };
+  decoder->registerClickAction([choose,decoder](brls::View*){choose("解码方式","hwdec",{{"auto","硬解优先（自动回退软解）"},{"no","软件解码（CPU）"}},decoder);return true;});
+  profile->registerClickAction([choose,profile](brls::View*){choose("播放器模式 · 均使用 MPV","playback.profile",{{"standard","MPV · 标准模式"},{"compatible","MPV · 兼容模式"}},profile);return true;});
+  preload->registerClickAction([choose,preload](brls::View*){choose("下一集预加载","playback.prefetch",{{"yes","开启"},{"no","关闭"}},preload);return true;});
+  autoplay->registerClickAction([choose,autoplay](brls::View*){choose("自动连播","playback.autoplay",{{"yes","开启"},{"no","关闭"}},autoplay);return true;});
+  for(auto* row:{decoder,profile,preload,autoplay})list->addView(row);
+  auto* note=new brls::Label();note->setText("兼容模式：关闭直接渲染，增加缓冲。黑屏或花屏时可尝试。\n设置自动保存；从播放页返回后，按新设置继续当前进度。");note->setSingleLine(false);note->setFontSize(18);note->setMarginTop(24);list->addView(note);
+  auto close=[onClose]{brls::Application::popActivity();if(onClose)onClose();};
+  list->addView(cell("保存并返回","B 键也可返回",close));
+  page->registerAction("返回",brls::BUTTON_B,[close](brls::View*){close();return true;});
+  brls::Application::pushActivity(new brls::Activity(page));
+#ifdef HONGGUO_PREVIEW
+  if(preview=="settings-decoder")choose("解码方式","hwdec",{{"auto","硬解优先（自动回退软解）"},{"no","软件解码（CPU）"}},decoder);
+  if(preview=="settings-player")choose("播放器模式 · 均使用 MPV","playback.profile",{{"standard","MPV · 标准模式"},{"compatible","MPV · 兼容模式"}},profile);
+#endif
+}
 struct Reader{std::string id;int64_t total=0,pos=0,cacheAt=-1;std::vector<unsigned char> cache;std::atomic<bool> cancelled{false};};
 static int64_t readStream(void* data,char* out,uint64_t size){auto* r=(Reader*)data;if(r->cancelled)return -1;if(r->pos>=r->total)return 0;try{
   const int64_t start=(r->pos/(1024*1024))*(1024*1024);
@@ -166,25 +201,40 @@ class Player:public brls::Box {
       if(!ok||choices.empty()){auto* note=new brls::Label();note->setText(ok?"本片源暂未提供其他清晰度":"清晰度读取失败，请返回后重试");list->addView(note);}brls::Application::giveFocus(automatic);
     });});
   }
+  void playbackSettings(){
+    if(!mpv||failed)return;stopHold();const bool wasPaused=paused;int pause=1;mpv_set_property(mpv,"pause",MPV_FORMAT_FLAG,&pause);
+    mpv_get_property(mpv,"time-pos",MPV_FORMAT_DOUBLE,&position);persist();auto flag=alive;const auto before=AppConfig::load();
+    openSettings([this,flag,wasPaused,before]{if(!*flag)return;auto config=AppConfig::load();prefetchEnabled=config.prefetch();policy.continuous=config.continuous();paused=wasPaused;
+      if(config.decoder()==before.decoder()&&config.profile()==before.profile()){int pause=wasPaused;mpv_set_property(mpv,"pause",MPV_FORMAT_FLAG,&pause);return;}
+      bool ok=mpv_set_property_string(mpv,"hwdec",config.decoder().c_str())>=0;
+      ok=(mpv_set_property_string(mpv,"vd-lavc-dr",config.directRendering().c_str())>=0)&&ok;
+      ok=(mpv_set_property_string(mpv,"demuxer-max-bytes",config.cacheBytes().c_str())>=0)&&ok;
+#ifdef HONGGUO_PREVIEW
+      mpv_set_property_string(mpv,"hwdec","no");mpv_set_property_string(mpv,"vd-lavc-dr","no");
+#endif
+      startEpisode(index,false,false,true);
+      if(!ok)message("部分设置需重新打开播放器后生效，设置已保存。");
+    });
+  }
   void buildMenu(){controls=new brls::Box(brls::Axis::COLUMN);controls->detach();controls->setDetachedPosition(24,290);controls->setSize(brls::Size(1232,342));controls->setPadding(16);controls->setBackgroundColor(nvgRGBA(15,17,23,235));progress=new brls::Label();progress->setWidth(1200);progress->setHeight(24);progress->setFontSize(18);progress->setHorizontalAlign(brls::HorizontalAlign::LEFT);progress->setMarginBottom(12);controls->addView(progress);std::vector<brls::View*> buttons;
     auto add=[&](const std::string& title,std::function<void()> fn){auto* button=new ClickableBox(brls::Axis::COLUMN);button->setWidth(284);button->setHeight(56);button->setPadding(10);button->setBackgroundColor(nvgRGB(42,46,58));auto* label=new brls::Label();label->setText(title);label->setFontSize(18);label->setHorizontalAlign(brls::HorizontalAlign::CENTER);button->addView(label);button->registerClickAction([fn](brls::View*){fn();return true;});buttons.push_back(button);};
     add("播放 / 暂停",[this]{togglePause();});add("后退 10 秒",[this]{seek(-10);});add("前进 10 秒",[this]{seek(10);});add("横竖切换",[this]{rotateVideo();});
-    add("上一集",[this]{startEpisode(index-1);});add("下一集",[this]{startEpisode(index+1);});add("倍速",[this]{cycleSpeed();});add("自动连播 开 / 关",[this]{policy.continuous=!policy.continuous;library["autoplay"]=policy.continuous;save();});
-    add("下载本集",[this]{startDownload(series,index);});add("清晰度",[this]{showQualities();});add("重试本集",[this]{retryNow();});add("隐藏菜单",[this]{showMenu(false);});add("返回列表",[]{brls::Application::popActivity();});addGrid(controls,buttons,4,12,8);firstControl=buttons.front();controls->setVisibility(brls::Visibility::GONE);addView(controls);timeline=new PlaybackTimeline([this](double at){seekTo(at);});timeline->detach();timeline->setDetachedPosition(24,644);timeline->setSize(brls::Size(1232,64));timeline->setVisibility(brls::Visibility::GONE);timeline->registerAction("控制菜单",brls::BUTTON_UP,[this](brls::View*){showMenu(true);return true;});addView(timeline);
+    add("上一集",[this]{startEpisode(index-1);});add("下一集",[this]{startEpisode(index+1);});add("倍速",[this]{cycleSpeed();});add("自动连播 开 / 关",[this]{policy.continuous=!policy.continuous;auto config=AppConfig::load();config.values["playback.autoplay"]=policy.continuous?"yes":"no";if(!config.save()){policy.continuous=!policy.continuous;message("自动连播设置保存失败，请检查 SD 卡。");}});
+    add("下载本集",[this]{startDownload(series,index);});add("清晰度",[this]{showQualities();});add("重试本集",[this]{retryNow();});add("隐藏菜单",[this]{showMenu(false);});add("返回列表",[]{brls::Application::popActivity();});add("播放设置",[this]{playbackSettings();});addGrid(controls,buttons,4,12,8);firstControl=buttons.front();controls->setVisibility(brls::Visibility::GONE);addView(controls);timeline=new PlaybackTimeline([this](double at){seekTo(at);});timeline->detach();timeline->setDetachedPosition(24,644);timeline->setSize(brls::Size(1232,64));timeline->setVisibility(brls::Visibility::GONE);timeline->registerAction("控制菜单",brls::BUTTON_UP,[this](brls::View*){showMenu(true);return true;});addView(timeline);
   }
 public:
 #ifdef HONGGUO_PREVIEW
   void previewMenu(){showMenu(true);}
 #endif
   Player(Json detail,int episode):brls::Box(brls::Axis::COLUMN),series(detail),episodes(detail.at("episodes")),index(episode){
-    setGrow(1);setBackgroundColor(nvgRGB(0,0,0));setFocusable(true);setHideHighlight(true);appletSetMediaPlaybackState(true);if(library.contains("autoplay")&&library["autoplay"].is_boolean())policy.continuous=library["autoplay"].get<bool>();buildMenu();
+    setGrow(1);setBackgroundColor(nvgRGB(0,0,0));setFocusable(true);setHideHighlight(true);appletSetMediaPlaybackState(true);policy.continuous=AppConfig::load().continuous();buildMenu();
     addGestureRecognizer(new PlaybackTouchGesture([this](brls::GestureState state,brls::Point point){screenTouch(state,point);}));
     registerAction("返回",brls::BUTTON_B,[this](brls::View*){if(menuVisible)showMenu(false);else brls::Application::popActivity();return true;});
     registerAction("播放/暂停",brls::BUTTON_A,[this](brls::View*){togglePause();return true;});registerAction("菜单",brls::BUTTON_X,[this](brls::View*){showMenu(!menuVisible);return true;});
     registerAction("后退10秒",brls::BUTTON_LEFT,[this](brls::View*){if(menuVisible)return false;seek(-10);return true;});registerAction("前进10秒",brls::BUTTON_RIGHT,[this](brls::View*){if(menuVisible)return false;seek(10);return true;});
     registerAction("下一集",brls::BUTTON_RB,[this](brls::View*){startEpisode(index+1);return true;});registerAction("上一集",brls::BUTTON_LB,[this](brls::View*){startEpisode(index-1);return true;});registerAction("倍速",brls::BUTTON_Y,[this](brls::View*){cycleSpeed();return true;});registerAction("横竖切换",brls::BUTTON_RT,[this](brls::View*){rotateVideo();return true;},false,false);
     mpv=mpv_create();if(!mpv){failed=true;status="播放器初始化失败";return;}
-    mpv_set_option_string(mpv,"config","no");mpv_set_option_string(mpv,"terminal","no");mpv_request_log_messages(mpv,"warn");mpv_set_option_string(mpv,"vo","libmpv");auto config=AppConfig::load();prefetchEnabled=config.get("playback.prefetch","yes")=="yes";auto hwdec=config.get("hwdec","auto");if(hwdec!="auto"&&hwdec!="no"&&hwdec!="nvdec"&&hwdec!="nvdec-copy")hwdec="auto";mpv_set_option_string(mpv,"hwdec",hwdec.c_str());mpv_set_option_string(mpv,"audio-channels","stereo");mpv_set_option_string(mpv,"cache","yes");mpv_set_option_string(mpv,"demuxer-max-bytes","16MiB");mpv_set_option_string(mpv,"opengl-glfinish","yes");mpv_set_option_string(mpv,"vd-lavc-dr","yes");
+    mpv_set_option_string(mpv,"config","no");mpv_set_option_string(mpv,"terminal","no");mpv_request_log_messages(mpv,"warn");mpv_set_option_string(mpv,"vo","libmpv");auto config=AppConfig::load();prefetchEnabled=config.prefetch();mpv_set_option_string(mpv,"hwdec",config.decoder().c_str());mpv_set_option_string(mpv,"audio-channels","stereo");mpv_set_option_string(mpv,"cache","yes");mpv_set_option_string(mpv,"demuxer-max-bytes",config.cacheBytes().c_str());mpv_set_option_string(mpv,"opengl-glfinish","yes");mpv_set_option_string(mpv,"vd-lavc-dr",config.directRendering().c_str());
 #ifdef HONGGUO_PREVIEW
     // Headless CI has neither a hardware decoder nor an audio device. Use a
     // deterministic software decoder and a clocked null audio sink there.
@@ -378,7 +428,7 @@ public:
     setGrow(1);setPadding(20,28,16,28);setBackgroundColor(nvgRGB(16,17,21));
     auto* toolbar=new brls::Box(brls::Axis::ROW);toolbar->setHeight(68);toolbar->setShrink(0);toolbar->setMarginBottom(12);
     auto* brand=label("红果",32,nvgRGB(246,244,249));brand->setGrow(1);brand->setMarginTop(6);toolbar->addView(brand);
-    auto* search=button("搜索",92,openSearch);toolbar->addView(search);toolbar->addView(button("刷新",92,[this]{refresh();}));toolbar->addView(button("清缓存",112,[this]{clearCache();}));addView(toolbar);
+    auto* search=button("搜索",92,openSearch);toolbar->addView(search);toolbar->addView(button("刷新",92,[this]{refresh();}));toolbar->addView(button("清缓存",112,[this]{clearCache();}));toolbar->addView(button("设置",92,[]{openSettings();}));addView(toolbar);
     auto* body=new brls::Box(brls::Axis::ROW);body->setGrow(1);body->setShrink(1);addView(body);
     auto* sidebar=new brls::Box(brls::Axis::COLUMN);sidebar->setWidth(116);sidebar->setShrink(0);sidebar->setMarginRight(12);body->addView(sidebar);auto* divider=new brls::Box(brls::Axis::COLUMN);divider->setWidth(1);divider->setShrink(0);divider->setMarginRight(19);divider->setBackgroundColor(nvgRGB(47,48,56));body->addView(divider);
     const std::vector<std::string> names={"发现","追剧","最近观看","下载"};
@@ -412,6 +462,7 @@ resetTrace();trace("startup:ui_ready");
     else if(screen=="search")brls::Application::pushActivity(new brls::Activity(new Page("search",Json::array({"演示搜索",1,"short"}))));
     else if(screen=="detail")showDetail(previewItems()[0]);
     else if(screen=="downloads")openDownloads();
+    else if(screen=="settings"||screen=="settings-decoder"||screen=="settings-player")openSettings({},screen);
     else if(screen=="player"||screen=="player-menu"){auto* player=new Player(previewDetail("1000"),0);brls::Application::pushActivity(new brls::Activity(player));if(screen=="player-menu")player->previewMenu();}
     else static_cast<HomeDashboard*>(dashboard)->previewScreen(screen);
 #endif

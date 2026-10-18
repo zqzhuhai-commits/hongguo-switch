@@ -20,11 +20,11 @@ assert len(nacp) == 0x4000
 name = nacp[:0x200].split(b'\0', 1)[0].decode('utf-8')
 assert name == '红果短剧', name
 assert struct.unpack_from('<Q', nacp, 0x3038)[0] == 0x0100F00D53414600
-assert nacp[0x3060:0x3070].split(b'\0', 1)[0] == b'1.1.1'
+assert nacp[0x3060:0x3070].split(b'\0', 1)[0] == b'1.1.2'
 assert (root / 'control/icon_AmericanEnglish.dat').read_bytes()[:2] == b'\xff\xd8'
 assert (root / 'romfs/phone_source.js').is_file(), 'New playback source missing'
 for file in root.rglob('*'):
     if file.is_file():
         assert file.suffix.lower() != '.keys' and file.name not in ('keys.dat', 'keys.txt', 'prod.keys', 'title.keys'), file.name
         assert not file.is_symlink()
-print(json.dumps({'name': name, 'titleId': '0100F00D53414600', 'version': '1.1.1', 'structuralChecksPassed': True, 'hardwareTested': False}, ensure_ascii=False))
+print(json.dumps({'name': name, 'titleId': '0100F00D53414600', 'version': '1.1.2', 'structuralChecksPassed': True, 'hardwareTested': False}, ensure_ascii=False))

@@ -3,7 +3,7 @@ set -eu
 mkdir -p build/screenshots 'sdmc:'
 ln -sfn romfs 'romfs:'
 ffmpeg -v error -f lavfi -i 'testsrc2=size=960x540:rate=25' -f lavfi -i 'sine=frequency=440:sample_rate=48000' -t 30 -c:v libx264 -pix_fmt yuv420p -c:a aac -y build/preview-video.mp4
-for screen in home category search detail player player-menu favorites history downloads; do
+for screen in home category search detail player player-menu favorites history downloads settings settings-decoder settings-player; do
   HONGGUO_PREVIEW_SCREEN="$screen" build-preview/hongguo-preview >"build/preview-$screen.log" 2>&1 &
   preview_pid=$!
   sleep 5

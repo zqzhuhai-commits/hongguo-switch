@@ -17,7 +17,7 @@ jobs:
         run: for test in tests/*.cjs; do node "$test" || exit 1; done
   playback-smoke:
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -25,12 +25,12 @@ jobs:
       - name: Prepare decoder
         run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
       - name: Decode real audio and video through the actual adapter
-        run: node scripts/probe-playback.cjs 1
+        run: node scripts/probe-matrix.cjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: playback-probe
-          path: build/playback-probe.json
+          path: build/playback-*.json
           retention-days: 30
   screenshots:
     runs-on: ubuntu-24.04
@@ -40,7 +40,17 @@ jobs:
         with:
           persist-credentials: false
       - name: Install preview dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config libglfw3-dev libmpv-dev libcurl4-openssl-dev libmbedtls-dev libdbus-1-dev xvfb xauth imagemagick ffmpeg fonts-noto-cjk libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config libglfw3-dev libmpv-dev libavcodec-dev libswscale-dev libcurl4-openssl-dev libmbedtls-dev libdbus-1-dev xvfb xauth imagemagick ffmpeg fonts-noto-cjk libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+      - name: Decode live HEIC covers with the production image decoder
+        run: |
+          node scripts/probe-covers.cjs
+          g++ -std=c++17 -Inative tests/poster_decode.cpp native/poster_decode.cpp $(pkg-config --cflags --libs libavcodec libswscale) -o /tmp/poster-decode
+          /tmp/poster-decode build/cover-probe/*.img
+          python3 - <<'PYCODE'
+          import json, subprocess
+          from pathlib import Path
+          Path('build/cover-probe.json').write_text(json.dumps({'commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'decodePassed':True,'decoded':4,'hardwareTested':False}))
+          PYCODE
       - name: Build the shared native UI for desktop preview
         run: |
           sh scripts/fetch-deps.sh
@@ -48,7 +58,9 @@ jobs:
           cmake -S . -B build-preview -DHONGGUO_PREVIEW=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build build-preview -j2
       - name: Capture all interface previews
-        run: xvfb-run -a -s '-screen 0 1280x720x24' sh scripts/capture-preview.sh
+        run: |
+          xvfb-run -a -s '-screen 0 1280x720x24' sh scripts/capture-preview.sh
+          xvfb-run -a -s '-screen 0 1280x720x24' sh scripts/capture-live.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -56,6 +68,9 @@ jobs:
           path: |
             build/screenshots/
             build/preview-*.log
+            build/live-*.log
+            build/live-*.trace
+            build/cover-probe.json
           retention-days: 30
   build:
     needs: protocol-tests
@@ -68,6 +83,7 @@ jobs:
           persist-credentials: false
       - name: Native policy and configuration tests
         run: |
+          g++ -std=c++17 -Inative tests/heic.cpp -o /tmp/heic && /tmp/heic
           g++ -std=c++17 -Inative tests/playback_policy.cpp -o /tmp/policy && /tmp/policy
           g++ -std=c++17 -Inative tests/playback_touch.cpp -o /tmp/touch && /tmp/touch
           g++ -std=c++17 -Inative tests/download_queue.cpp -o /tmp/downloads && /tmp/downloads

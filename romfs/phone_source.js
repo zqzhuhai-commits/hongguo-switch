@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Protocol compatibility reference: qq294716498/HongguoTV-Phone-TV-NoAds,
-// native/core/provider_hongguo_{app,sign,native_media,playback}.go (c356be4).
+// native/core/provider_hongguo_{app,sign,native_media,playback}.go (app-v0.1.17-42).
 const PhoneSource = (() => {
   const ua='com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)';
   const identity=()=>String(1000000000000000000n+BigInt(Math.floor(Math.random()*Number.MAX_SAFE_INTEGER))*1000n%8000000000000000000n);
@@ -64,19 +64,21 @@ const PhoneSource = (() => {
     if(String(page?.vid)!==id||String(page?.series_id)!==series)return [];
     return addresses(page.video_player_info||{});
   }
-  const cache=new Map();
+  const cache=new Map(),contentTypes=new Map();
   const parseJSON=text=>JSON.parse(String(text).replace(/"(?:\\.|[^"\\])*"|(-?\d{16,})(?=[,}\]\s])/g,(token,integer)=>integer?'"'+integer+'"':token));
   async function appRequest(path,payload){
     const now=Date.now(),values={aid:'8662',app_name:'novelread',version_code:'73532',version_name:'7.3.5.32',manifest_version_code:'73532',update_version_code:'73532',channel:'update_64',device_platform:'android',os:'android',ssmix:'a',device_type:'25053RT47C',device_brand:'Redmi',language:'zh',os_api:'36',os_version:'16',resolution:'1280*2772',dpi:'520',ac:'wifi',device_id:deviceId,iid:installId,_rticket:String(now)};
     const query=pythonUrlEncode(Object.fromEntries(Object.entries(values).sort(([a],[b])=>a<b?-1:a>b?1:0))).replace(/\*/g,'%2A');
     const body=JSON.stringify(payload);
-    const response=await axios.post('https://api5-normal-sinfonlineb.fqnovel.com'+path+'?'+query,body,{headers:{'User-Agent':ua,Accept:'application/json','X-XS-From-Web':'0','Sdk-Version':'2','Content-Type':'application/json; charset=utf-8',...sign(query,body,now)},responseType:'text'});
+    // Released client omits the legacy signature on the media endpoint: sending it
+    // suppresses the response body (HTTP 200, zero bytes). Other APIs still sign.
+    const response=await axios.post('https://api5-normal-sinfonlineb.fqnovel.com'+path+'?'+query,body,{headers:{'User-Agent':ua,Accept:'application/json','X-XS-From-Web':'0','Sdk-Version':'2','Content-Type':'application/json; charset=utf-8',...(path==='/novel/player/video_model/v1/'?{}:sign(query,body,now))},responseType:'text'});
     const data=parseJSON(response.data);if(response.status!==200||Number(data.code??data.Code??data.status_code??data.BaseResp?.StatusCode??0)!==0)throw Error('新版 App 播放接口暂不可用');
     return data;
   }
   async function videoInfo(id){
     if(!valid(id))throw Error('分集 ID 无效');const hit=cache.get(id);if(hit&&Date.now()-hit.time<240000)return hit.value;
-    const data=await appRequest('/novel/player/video_model/v1/',{biz_param:{need_all_video_definition:true,video_platform:3},content_type:1,video_id:id});
+    const data=await appRequest('/novel/player/video_model/v1/',{biz_param:{need_all_video_definition:true,video_platform:3},content_type:contentTypes.get(id)||1,video_id:id});
     const raw=data.data?.video_model,model=typeof raw==='string'?parseJSON(raw):raw,value=rowsFromModel(model);
     cache.set(id,{time:Date.now(),value});while(cache.size>4)cache.delete(cache.keys().next().value);return value;
   }
@@ -100,9 +102,11 @@ const PhoneSource = (() => {
     if(!valid(id))throw Error('剧集 ID 无效');
     const row=(await appRequest('/novel/player/video_detail/v1/',{series_id:id})).data?.video_data;
     if(String(row?.series_id_str||row?.series_id)!==id||!Array.isArray(row?.video_list))throw Error('新版详情未返回所请求的剧集');
-    const episodes=row.video_list.map(v=>({id:String(v.vid),number:Number(v.vid_index),title:'第 '+v.vid_index+' 集',series:String(v.series_id||id)})).sort((a,b)=>a.number-b.number);
+    const episodes=row.video_list.map(v=>({contentType:Number(v.content_type??row.content_type),id:String(v.vid),number:Number(v.vid_index),title:'第 '+v.vid_index+' 集',series:String(v.series_id||id)})).sort((a,b)=>a.number-b.number);
     if(!episodes.length||episodes.length>2000||Number(row.episode_cnt)>episodes.length||new Set(episodes.map(v=>v.id)).size!==episodes.length||episodes.some((v,i)=>!valid(v.id)||v.number!==i+1||v.series!==id))throw Error('新版详情分集不完整');
-    return {...card(row),episodes:episodes.map(({series,...episode})=>episode)};
+    for(const episode of episodes){const type=episode.contentType;if(Number.isInteger(type)&&((type>=1&&type<=7)||(type>=1000&&type<=1011)))contentTypes.set(episode.id,type);}
+    while(contentTypes.size>6000)contentTypes.delete(contentTypes.keys().next().value);
+    return {...card(row),episodes:episodes.map(({series,contentType,...episode})=>episode)};
   }
   async function search(keyword,page){
     if(typeof keyword!=='string'||!keyword.trim()||keyword.length>160||/[\x00-\x1f]/.test(keyword))throw Error('搜索词无效');

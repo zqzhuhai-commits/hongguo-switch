@@ -1,0 +1,3 @@
+// SPDX-License-Identifier: GPL-3.0-only
+const fs=require('fs'),{ctx,request}=require('./probe-runtime.cjs');
+(async()=>{const home=await ctx.SwitchAPI.home(1,'short');if(home.items.length<4)throw Error('Insufficient live catalog');fs.mkdirSync('build/cover-probe',{recursive:true});for(let i=0;i<4;i++){const row=home.items[i];if(!/^https?:\/\//.test(row.cover))throw Error('Missing cover');const response=await request(row.cover,{responseType:'arraybuffer',headers:{Referer:'https://hongguoduanju.com/'}});fs.writeFileSync('build/cover-probe/'+i+'.img',response.data);console.log('cover',i,'HTTP',response.status,'bytes',response.data.length);}})().catch(e=>{console.error(e.message.replace(/https?:\/\/[^ ]+/g,'[URL]'));process.exitCode=1;});

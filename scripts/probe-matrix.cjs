@@ -1,0 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+const fs=require('fs'),cp=require('child_process');
+const episodes=[1,4,10,31],results=[];fs.mkdirSync('build',{recursive:true});
+for(const number of episodes){const file='build/playback-episode-'+number+'.json';try{fs.unlinkSync(file);}catch(_){}const child=cp.spawnSync(process.execPath,['scripts/probe-playback.cjs',String(number-1)],{env:{...process.env,HONGGUO_PROBE_OUTPUT:file},encoding:'utf8',timeout:300000});const result=fs.existsSync(file)?JSON.parse(fs.readFileSync(file)):{};results.push({...result,episodeNumber:number,decodePassed:child.status===0&&result.decodePassed===true});console.log('episode',number,'source',result.source||'unavailable','decoded',result.decodedSeconds||0,'passed',results.at(-1).decodePassed);}
+const report={commit:cp.execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),createdAt:new Date().toISOString(),decodePassed:results.every(x=>x.decodePassed&&x.audioAndVideo&&x.frames>0&&x.decodedSeconds>=14),hardwareTested:false,episodes:results};fs.writeFileSync('build/playback-matrix.json',JSON.stringify(report,null,2)+'\n');if(!report.decodePassed)process.exitCode=1;

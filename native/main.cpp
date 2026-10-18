@@ -56,14 +56,14 @@ static brls::Box* quickButton(const std::string& name,const std::string& note,st
 static brls::DetailCell* cell(const std::string& name,const std::string& note,std::function<void()> fn){auto* v=new brls::DetailCell();v->setText(name);v->setDetailText(note);v->addGestureRecognizer(new brls::TapGestureRecognizer(v));v->registerClickAction([fn](brls::View*){fn();return true;});return v;}
 static std::atomic<int> posterJobs{0};
 class PosterImage:public brls::Image {
-  std::string url,badge;bool started=false,finished=false;
+  std::string url,badge;bool started=false,finished=false;int attempts=0;std::chrono::steady_clock::time_point retryAt{};
   std::shared_ptr<std::atomic<bool>> alive=std::make_shared<std::atomic<bool>>(true);
 public:
   explicit PosterImage(std::string url,float width=104,float height=156,std::string badge=""):url(std::move(url)),badge(std::move(badge)){setWidth(width);setHeight(height);setScalingType(brls::ImageScalingType::FIT);setBackgroundColor(nvgRGB(40,43,47));}
   ~PosterImage(){alive->store(false);}
   void draw(NVGcontext* vg,float x,float y,float w,float h,brls::Style style,brls::FrameContext* ctx)override {
-    if(!started && !url.empty() && x+w>=0 && x<=1280 && y+h>=0 && y<=720 && posterJobs.load()<2){started=true;posterJobs++;auto flag=alive;auto address=url;
-      posterTask([this,flag,address]{PosterPixels image;try{image=fetchPoster(address,*flag);}catch(...){}posterJobs--;brls::sync([this,flag,image=std::move(image)]{if(!flag->load())return;finished=true;if(!image.rgba.empty()){trace("poster:upload_begin");innerSetImage(nvgCreateImageRGBA(brls::Application::getNVGContext(),image.width,image.height,0,image.rgba.data()));trace("poster:upload_end");}});});
+    if(!started && attempts<3 && std::chrono::steady_clock::now()>=retryAt && !url.empty() && x+w>=0 && x<=1280 && y+h>=0 && y<=720 && posterJobs.load()<2){started=true;attempts++;posterJobs++;auto flag=alive;auto address=url;
+      posterTask([this,flag,address]{PosterPixels image;try{image=fetchPoster(address,*flag);}catch(...){}posterJobs--;brls::sync([this,flag,image=std::move(image)]{if(!flag->load())return;finished=true;if(!image.rgba.empty()){trace("poster:upload_begin");innerSetImage(nvgCreateImageRGBA(brls::Application::getNVGContext(),image.width,image.height,0,image.rgba.data()));trace("poster:upload_end");}else if(attempts<3){started=false;retryAt=std::chrono::steady_clock::now()+std::chrono::seconds(attempts*3);}});});
     }
     if(getTexture())brls::Image::draw(vg,x,y,w,h,style,ctx);
     else {nvgFontFaceId(vg,brls::Application::getDefaultFont());nvgFontSize(vg,15);nvgFillColor(vg,nvgRGB(160,165,170));nvgTextAlign(vg,NVG_ALIGN_CENTER|NVG_ALIGN_MIDDLE);nvgText(vg,x+w/2,y+h/2,finished||url.empty()?"暂无封面":"封面加载中",nullptr);}
@@ -375,13 +375,16 @@ static brls::View* home(){return new HomeDashboard();}
 
 int main(int,char**){curl_global_init(CURL_GLOBAL_DEFAULT);if(!brls::Application::init())return 1;brls::Application::createWindow("红果短剧");brls::Application::setGlobalQuit(true);brls::Theme::getLightTheme()=brls::Theme::getDarkTheme();for(auto* theme:{&brls::Theme::getLightTheme(),&brls::Theme::getDarkTheme()}){theme->addColor("brls/highlight/color1",nvgRGB(255,121,101));theme->addColor("brls/highlight/color2",nvgRGB(255,173,146));theme->addColor("brls/click_pulse",nvgRGBA(255,121,101,45));}load();
 #ifdef HONGGUO_PREVIEW
-  glfwSetWindowSize(glfwGetCurrentContext(),1280,720);library["favorites"]=previewItems();library["history"]=Json::array();for(const auto& row:previewItems())library["history"].push_back(Json{{"series",row}});library["downloads"]=Json::array({Json{{"id","1000"},{"seriesId","1000"},{"title","暮色回响 · 第 1 集"},{"number",1},{"path","build/preview-video.mp4"}}});
+  glfwSetWindowSize(glfwGetCurrentContext(),1280,720);if(!std::getenv("HONGGUO_LIVE")){library["favorites"]=previewItems();library["history"]=Json::array();for(const auto& row:previewItems())library["history"].push_back(Json{{"series",row}});library["downloads"]=Json::array({Json{{"id","1000"},{"seriesId","1000"},{"title","暮色回响 · 第 1 集"},{"number",1},{"path","build/preview-video.mp4"}}});}
 #endif
 resetTrace();trace("startup:ui_ready");
   try{if(!startWorkers())throw std::runtime_error("Worker initialization failed");backend=new Backend();mkdir("sdmc:/switch/hongguo-saf/downloads",0777);downloads=std::make_unique<DownloadQueue>("sdmc:/switch/hongguo-saf/downloads",[](const std::string& id,int64_t offset){auto result=backend->call("downloadSlice",Json::array({id,offset}));return DownloadChunk{result.at("total").get<int64_t>(),unhex(result.at("hex").get<std::string>())};},apiBackgroundTask,[](const DownloadStatus& item){brls::sync([item]{if(!library.contains("downloads"))library["downloads"]=Json::array();library["downloads"].push_back(Json{{"id",item.id},{"title",item.title},{"path",item.path},{"seriesId",item.seriesId},{"number",item.number}});save();});});trace("startup:backend_ready");const auto result=backend->call("selftest",Json::array());if(result.value("sm3",std::string())!="66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0")throw std::runtime_error("Self test");auto* dashboard=home();brls::Application::pushActivity(new brls::Activity(dashboard));
 #ifdef HONGGUO_PREVIEW
     const std::string screen=std::getenv("HONGGUO_PREVIEW_SCREEN")?std::getenv("HONGGUO_PREVIEW_SCREEN"):"home";
-    if(screen=="search")brls::Application::pushActivity(new brls::Activity(new Page("search",Json::array({"演示搜索",1,"short"}))));
+    const bool live=std::getenv("HONGGUO_LIVE");
+    if(live&&(screen=="player"||screen=="player-menu")){auto detail=backend->call("detail",Json::array({"7686713195246930968"}));auto* player=new Player(detail,30);brls::Application::pushActivity(new brls::Activity(player));if(screen=="player-menu")player->previewMenu();}
+    else if(live&&screen=="detail")showDetail(Json{{"id","7686713195246930968"},{"title","首辅娇娘"}});
+    else if(screen=="search")brls::Application::pushActivity(new brls::Activity(new Page("search",Json::array({"演示搜索",1,"short"}))));
     else if(screen=="detail")showDetail(previewItems()[0]);
     else if(screen=="downloads")openDownloads();
     else if(screen=="player"||screen=="player-menu"){auto* player=new Player(previewDetail("1000"),0);brls::Application::pushActivity(new brls::Activity(player));if(screen=="player-menu")player->previewMenu();}
@@ -391,7 +394,7 @@ resetTrace();trace("startup:ui_ready");
   catch(...){auto* text=new brls::Label();text->setText("应用初始化失败，请确认安装包完整。");brls::Application::pushActivity(new brls::Activity(text));}
   auto previewStarted=std::chrono::steady_clock::now();while(brls::Application::mainLoop()){
 #ifdef HONGGUO_PREVIEW
-    if(std::chrono::steady_clock::now()-previewStarted>std::chrono::seconds(20))break;
+    if(std::chrono::steady_clock::now()-previewStarted>std::chrono::seconds(std::getenv("HONGGUO_LIVE")?180:20))break;
 #endif
   }trace("shutdown:begin");stopWorkers();save();return 0;
 }

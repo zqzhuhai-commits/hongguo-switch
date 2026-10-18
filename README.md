@@ -1,6 +1,10 @@
-# 红果短剧 Switch 1.1.0 测试版
+# 红果短剧 Switch 1.1.1 修复版
 
 本次以用户提供的 Phone/TV 案例重做核心目录、搜索、详情、取流、下载和首页布局。真实视频音轨与视频轨已通过 15 秒解码测试；Switch 实机与所有剧集的可用性仍需验证。
+
+1.1.1 修复 HEIC / WebP 封面解码，并对照参考项目 `app-v0.1.17-42` 修正媒体接口：该接口不再附加旧版签名头，沿用详情返回的 `content_type`；目录等接口仍保留签名。旧 `source=app158` 配置自动迁移到新适配器。封面失败最多重试三次。
+
+NSP 打包要求同一提交的第 1、4、10、31 集各通过 15 秒音视频解码，且四张真实封面经原生图片解码器通过。新增线上首页、分类、详情和第 31 集播放器桌面截图；Switch 实机仍需验证。
 
 [本次修改](https://github.com/zqzhuhai-commits/hongguo-switch/pull/1) · [构建和测试](https://github.com/zqzhuhai-commits/hongguo-switch/actions)
 

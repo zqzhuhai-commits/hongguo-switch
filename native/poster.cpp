@@ -37,7 +37,10 @@ PosterPixels fetchPoster(const std::string& address,const std::atomic<bool>& ali
   const auto status=curl_easy_perform(h);if(status!=CURLE_OK || !alive.load()){trace("poster:curl_error:"+std::to_string((int)status));return result;}trace("poster:download_complete");
   long code=0;curl_easy_getinfo(h,CURLINFO_RESPONSE_CODE,&code);if(code!=200){trace("poster:http_error:"+std::to_string(code));return result;}
   trace("poster:decode_begin");int w=0,height=0,channels=0;
-  if(!stbi_info_from_memory(d.bytes.data(),(int)d.bytes.size(),&w,&height,&channels) || w<1 || height<1 || (int64_t)w*height>6*1024*1024)return result;
+  if(!stbi_info_from_memory(d.bytes.data(),(int)d.bytes.size(),&w,&height,&channels)){
+    result=decodeModernPoster(d.bytes);trace(result.rgba.empty()?"poster:unsupported_or_invalid":"poster:modern_decode_complete");return result;
+  }
+  if(w<1 || height<1 || (int64_t)w*height>6*1024*1024)return result;
   std::unique_ptr<unsigned char,decltype(&stbi_image_free)> source(stbi_load_from_memory(d.bytes.data(),(int)d.bytes.size(),&w,&height,&channels,4),stbi_image_free);
   if(!source || !alive.load()){trace("poster:decode_failed");return result;}
   // Decode and resize in the worker; the UI only uploads a 256px-wide texture.

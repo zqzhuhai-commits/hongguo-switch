@@ -19,7 +19,15 @@ for screen in home category detail player player-menu; do
   done
   if [ "$ready" != true ]; then cat "$trace"; kill "$preview_pid"; exit 1; fi
   sleep 12
-  import -window root "build/screenshots/live-$screen.png"
+  if [ "$screen" = player ] || [ "$screen" = player-menu ]; then
+    for frame in 1 2 3; do
+      import -window root "build/live-$screen-$frame.png"
+      sleep 2
+    done
+    python3 scripts/verify-video-frames.py "$screen"
+  else
+    import -window root "build/screenshots/live-$screen.png"
+  fi
   cp "$trace" "build/live-$screen.trace"
   kill "$preview_pid"
   wait "$preview_pid" || true

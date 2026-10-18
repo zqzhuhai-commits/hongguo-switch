@@ -203,6 +203,9 @@ public:
     }
     nvgEndFrame(vg);GLint fbo=0;glGetIntegerv(GL_FRAMEBUFFER_BINDING,&fbo);glBindFramebuffer(GL_FRAMEBUFFER,fbo);glViewport(0,0,brls::Application::windowWidth,brls::Application::windowHeight);glDisable(GL_SCISSOR_TEST);glDisable(GL_STENCIL_TEST);glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
     if(renderer&&!failed){mpv_opengl_fbo surface{fbo,(int)brls::Application::windowWidth,(int)brls::Application::windowHeight,0};int flip=1;mpv_render_param params[]={{MPV_RENDER_PARAM_OPENGL_FBO,&surface},{MPV_RENDER_PARAM_FLIP_Y,&flip},{MPV_RENDER_PARAM_INVALID,nullptr}};mpv_render_context_render(renderer,params);mpv_render_context_report_swap(renderer);}else{glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT);}
+    // libmpv may leave an intermediate framebuffer bound. Restore our target
+    // before the alpha clear and NanoVG overlay, as in the upstream player.
+    glBindFramebuffer(GL_FRAMEBUFFER,fbo);glViewport(0,0,brls::Application::windowWidth,brls::Application::windowHeight);
     glColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
     const auto factor=brls::Application::getPlatform()->getVideoContext()->getScaleFactor();nvgBeginFrame(vg,brls::Application::windowWidth,brls::Application::windowHeight,factor);nvgScale(vg,brls::Application::windowScale,brls::Application::windowScale);
     nvgFontFaceId(vg,brls::Application::getDefaultFont());nvgFontSize(vg,22);nvgFillColor(vg,nvgRGBA(255,255,255,240));nvgTextAlign(vg,NVG_ALIGN_LEFT|NVG_ALIGN_TOP);

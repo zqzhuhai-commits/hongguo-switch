@@ -40,7 +40,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install preview dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config libglfw3-dev libmpv-dev libavcodec-dev libswscale-dev libcurl4-openssl-dev libmbedtls-dev libdbus-1-dev xvfb xauth imagemagick ffmpeg fonts-noto-cjk libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config libglfw3-dev libmpv-dev libavcodec-dev libswscale-dev libcurl4-openssl-dev libmbedtls-dev libdbus-1-dev xvfb xauth imagemagick ffmpeg python3-pil fonts-noto-cjk libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
       - name: Decode live HEIC covers with the production image decoder
         run: |
           node scripts/probe-covers.cjs
@@ -71,6 +71,7 @@ jobs:
             build/live-*.log
             build/live-*.trace
             build/cover-probe.json
+            build/video-frame-check.json
           retention-days: 30
   build:
     needs: protocol-tests

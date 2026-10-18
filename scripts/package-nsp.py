@@ -3,6 +3,7 @@ import argparse,json,pathlib,subprocess,shutil,tempfile
 p=argparse.ArgumentParser()
 p.add_argument('--package',required=True,type=pathlib.Path)
 p.add_argument('--probe',required=True,type=pathlib.Path)
+p.add_argument('--video-frames',required=True,type=pathlib.Path)
 p.add_argument('--covers',required=True,type=pathlib.Path)
 p.add_argument('--keyset',required=True,type=pathlib.Path)
 p.add_argument('--tool',default='hacbrewpack')
@@ -16,6 +17,9 @@ if not (r.get('decodePassed') and r.get('commit')==commit and {1,4,10,31}.issubs
 covers=json.loads(a.covers.read_text())
 if not (covers.get('commit')==commit and covers.get('decodePassed') and covers.get('decoded',0)>=4):
     raise SystemExit('Live cover decoding did not pass for this exact commit; NSP was not generated.')
+video=json.loads(a.video_frames.read_text())
+if not (video.get('commit')==commit and video.get('displayPassed') and {'player','player-menu'}.issubset(set(video.get('screens',{})))):
+    raise SystemExit('Native video display verification did not pass for this commit; NSP was not generated.')
 if not a.keyset.is_file():raise SystemExit('NSP requires a local keyset file containing header_key and key_area_key_application_00.')
 for path in ['exefs/main','exefs/main.npdm','control/control.nacp']:
     if not (a.package/path).is_file():raise SystemExit('Incomplete Switch package inputs: '+path)

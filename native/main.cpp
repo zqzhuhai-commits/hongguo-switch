@@ -132,7 +132,7 @@ public:
 };
 
 class Player:public brls::Box {
-  mpv_handle* mpv=nullptr;mpv_render_context* renderer=nullptr;VideoSurface videoSurface;
+  mpv_handle* mpv=nullptr;mpv_render_context* renderer=nullptr;VideoSurface videoSurface;std::atomic<bool> framePending{true};
   Json series,episodes;int index=0,speedIndex=1,rotation=0;
   bool failed=false,nextQueued=false,paused=false,errorState=false,menuVisible=false,loaded=false,holdApplied=false;
   double position=0,duration=0,resumeTarget=0;bool opened=false;uint64_t lastSave=0;size_t retryDelay=0;
@@ -155,7 +155,7 @@ class Player:public brls::Box {
   void rotateVideo(){stopHold();if(!mpv||failed)return;int64_t angle=rotation==0?90:0;if(mpv_set_property(mpv,"video-rotate",MPV_FORMAT_INT64,&angle)>=0)rotation=(int)angle;else status="当前视频暂不支持方向切换";}
   void retryNow(){if(mpv&&renderer&&!failed)startEpisode(index,false,true);}
   void scheduleRetry(){stopHold();timeline->reset();errorState=true;if(policy.pending)return;auto wait=policy.scheduleRetry();if(!wait){status="本集暂时无法播放，可重试或选择其他分集。";showMenu(true);return;}trace("playback:retry_scheduled:"+std::to_string(policy.retries));status="正在重新获取播放源（重试 "+std::to_string(policy.retries)+"/3）…";auto flag=alive;const auto token=policy.generation;retryDelay=brls::delay(*wait,[this,flag,token]{if(!flag->load())return;if(policy.consumeRetry(token)){retryDelay=0;startEpisode(index,true);}});}
-  void startEpisode(int target,bool retry=false,bool fresh=false,bool preservePause=false){if(!mpv||!renderer||failed||target<0||target>=(int)episodes.size())return;stopHold();timeline->reset();if(retryDelay){brls::cancelDelay(retryDelay);retryDelay=0;}resumePaused=preservePause?paused:(retry?resumePaused:false);if(target!=index){selectedTier.clear();selectedQuality="自动";}policy.begin(retry);warmGeneration->store(policy.generation);warmScheduled=false;loadStarted=touchTime();persist();index=target;position=0;duration=0;opened=true;resumeTarget=0;for(const auto& row:library["history"])if(row.value("episodeId",std::string())==episodes[index].value("id",std::string()))resumeTarget=row.value("position",0.0)/1000;nextQueued=false;paused=false;errorState=false;loaded=false;int unpause=0;mpv_set_property(mpv,"pause",MPV_FORMAT_FLAG,&unpause);status=retry?"正在重新连接（重试 "+std::to_string(policy.retries)+"/3）…":"正在连接播放源…";{std::lock_guard<std::mutex> lock(playbackErrorMutex);playbackErrorId.clear();playbackError.clear();}const auto url=episodes[index].value("localPath",std::string()).empty()?"saf://"+episodes[index].at("id").get<std::string>()+"/"+selectedTier+"/"+((retry||fresh)?"1":"0"):episodes[index].at("localPath").get<std::string>();const char* command[]={"loadfile",url.c_str(),"replace",nullptr};trace("playback:load_begin");if(mpv_command(mpv,command)<0)scheduleRetry();}
+  void startEpisode(int target,bool retry=false,bool fresh=false,bool preservePause=false){if(!mpv||!renderer||failed||target<0||target>=(int)episodes.size())return;stopHold();timeline->reset();videoSurface.invalidate();framePending=true;videoDiagnosed=false;if(retryDelay){brls::cancelDelay(retryDelay);retryDelay=0;}resumePaused=preservePause?paused:(retry?resumePaused:false);if(target!=index){selectedTier.clear();selectedQuality="自动";}policy.begin(retry);warmGeneration->store(policy.generation);warmScheduled=false;loadStarted=touchTime();persist();index=target;position=0;duration=0;opened=true;resumeTarget=0;for(const auto& row:library["history"])if(row.value("episodeId",std::string())==episodes[index].value("id",std::string()))resumeTarget=row.value("position",0.0)/1000;nextQueued=false;paused=false;errorState=false;loaded=false;int unpause=0;mpv_set_property(mpv,"pause",MPV_FORMAT_FLAG,&unpause);status=retry?"正在重新连接（重试 "+std::to_string(policy.retries)+"/3）…":"正在连接播放源…";{std::lock_guard<std::mutex> lock(playbackErrorMutex);playbackErrorId.clear();playbackError.clear();}const auto url=episodes[index].value("localPath",std::string()).empty()?"saf://"+episodes[index].at("id").get<std::string>()+"/"+selectedTier+"/"+((retry||fresh)?"1":"0"):episodes[index].at("localPath").get<std::string>();const char* command[]={"loadfile",url.c_str(),"replace",nullptr};trace("playback:load_begin");if(mpv_command(mpv,command)<0)scheduleRetry();}
   void showQualities(){
     if(!mpv||failed)return;stopHold();const auto id=episodes[index].at("id").get<std::string>();auto flag=alive;
     auto* list=new brls::Box(brls::Axis::COLUMN);auto* picker=::frame(list,"选择清晰度");back(picker);auto pickerFlag=picker->alive;
@@ -192,9 +192,9 @@ public:
 #endif
     if(mpv_stream_cb_add_ro(mpv,"saf",nullptr,openStream)<0||mpv_initialize(mpv)<0){failed=true;status="播放器初始化失败";return;}
     mpv_opengl_init_params gl{getProc,nullptr};mpv_render_param params[]={{MPV_RENDER_PARAM_API_TYPE,(void*)MPV_RENDER_API_TYPE_OPENGL},{MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,&gl},{MPV_RENDER_PARAM_INVALID,nullptr}};
-    if(mpv_render_context_create(&renderer,mpv,params)<0){failed=true;status="视频渲染初始化失败";return;}startEpisode(index);
+    if(mpv_render_context_create(&renderer,mpv,params)<0){failed=true;status="视频渲染初始化失败";return;}mpv_render_context_set_update_callback(renderer,[](void* opaque){static_cast<Player*>(opaque)->framePending.store(true);},this);startEpisode(index);
   }
-  ~Player(){stopHold();*alive=false;if(retryDelay)brls::cancelDelay(retryDelay);persist();if(renderer)mpv_render_context_free(renderer);if(mpv)mpv_terminate_destroy(mpv);appletSetMediaPlaybackState(false);}
+  ~Player(){stopHold();*alive=false;if(retryDelay)brls::cancelDelay(retryDelay);persist();if(renderer){mpv_render_context_set_update_callback(renderer,nullptr,nullptr);mpv_render_context_free(renderer);}if(mpv)mpv_terminate_destroy(mpv);appletSetMediaPlaybackState(false);}
   void draw(NVGcontext* vg,float x,float y,float w,float h,brls::Style style,brls::FrameContext* ctx)override{
     if(mpv&&!failed){for(int count=0;count<30;count++){mpv_event* event=mpv_wait_event(mpv,0);if(event->event_id==MPV_EVENT_NONE)break;if(event->event_id==MPV_EVENT_FILE_LOADED){status="";errorState=false;loaded=true;trace("playback:loaded:ms="+std::to_string(touchTime()-loadStarted));if(resumeTarget>0){const std::string at=std::to_string(resumeTarget);const char* seekCommand[]={"seek",at.c_str(),"absolute",nullptr};mpv_command(mpv,seekCommand);resumeTarget=0;}if(resumePaused){int p=1;mpv_set_property(mpv,"pause",MPV_FORMAT_FLAG,&p);paused=true;resumePaused=false;}}
       if(event->event_id==MPV_EVENT_LOG_MESSAGE){auto* log=(mpv_event_log_message*)event->data;std::string line=log->text?log->text:"";for(size_t at=0;(at=line.find("http",at))!=std::string::npos;){auto end=line.find_first_of(" \t\r\n",at);line.replace(at,end==std::string::npos?line.size()-at:end-at,"[URL]");at+=5;}trace("mpv:"+std::string(log->prefix?log->prefix:"")+":"+line.substr(0,240));}
@@ -213,18 +213,21 @@ public:
     nvgEndFrame(vg);GLint target=0;glGetIntegerv(GL_FRAMEBUFFER_BINDING,&target);
     const int physicalWidth=brls::Application::windowWidth,physicalHeight=brls::Application::windowHeight;
     const bool surfaceReady=renderer&&!failed&&videoSurface.ensure(vg,physicalWidth,physicalHeight);
-    if(surfaceReady){
+    if(surfaceReady&&loaded&&(framePending.exchange(false)||!videoSurface.hasFrame())){
+      const auto updates=mpv_render_context_update(renderer);
+      if((updates&MPV_RENDER_UPDATE_FRAME)||!videoSurface.hasFrame()){
       glBindFramebuffer(GL_FRAMEBUFFER,videoSurface.target());glViewport(0,0,physicalWidth,physicalHeight);
       glDisable(GL_SCISSOR_TEST);glDisable(GL_STENCIL_TEST);glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glDisable(GL_CULL_FACE);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
       mpv_opengl_fbo surface{(int)videoSurface.target(),physicalWidth,physicalHeight,GL_RGBA8};int flip=1;
       mpv_render_param params[]={{MPV_RENDER_PARAM_OPENGL_FBO,&surface},{MPV_RENDER_PARAM_FLIP_Y,&flip},{MPV_RENDER_PARAM_INVALID,nullptr}};
-      mpv_render_context_render(renderer,params);
+      const int rendered=mpv_render_context_render(renderer,params);
       glBindFramebuffer(GL_FRAMEBUFFER,videoSurface.target());glDisable(GL_SCISSOR_TEST);glColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
-      mpv_render_context_report_swap(renderer);
+      if(rendered>=0)videoSurface.frameRendered();else trace("video:render_error:"+std::to_string(rendered));mpv_render_context_report_swap(renderer);
+      }
     }
     glBindFramebuffer(GL_FRAMEBUFFER,target);glViewport(0,0,physicalWidth,physicalHeight);
     const auto factor=brls::Application::getPlatform()->getVideoContext()->getScaleFactor();nvgBeginFrame(vg,physicalWidth,physicalHeight,factor);nvgScale(vg,brls::Application::windowScale,brls::Application::windowScale);
-    if(surfaceReady)videoSurface.paint(vg,x,y,w,h);
+    if(surfaceReady&&videoSurface.hasFrame())videoSurface.paint(vg,x,y,w,h);
     nvgFontFaceId(vg,brls::Application::getDefaultFont());nvgFontSize(vg,22);nvgFillColor(vg,nvgRGBA(255,255,255,240));nvgTextAlign(vg,NVG_ALIGN_LEFT|NVG_ALIGN_TOP);
     const std::string title=series.value("title",std::string())+" · 第 "+std::to_string(index+1)+" 集";nvgTextBox(vg,28,20,1224,title.c_str(),nullptr);if(!status.empty())nvgTextBox(vg,60,180,1160,status.c_str(),nullptr);
     timeline->update(position,duration,loaded&&!errorState&&!failed);if(holdApplied){nvgTextAlign(vg,NVG_ALIGN_CENTER|NVG_ALIGN_TOP);nvgText(vg,640,90,"2倍速播放中 · 松开恢复",nullptr);}

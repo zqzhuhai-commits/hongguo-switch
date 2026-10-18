@@ -2,7 +2,7 @@
 set -eu
 mkdir -p build/screenshots 'sdmc:'
 ln -sfn romfs 'romfs:'
-for screen in home category detail player-menu; do
+for screen in home category detail player player-menu; do
   HONGGUO_LIVE=1 HONGGUO_PREVIEW_SCREEN="$screen" build-preview/hongguo-preview >"build/live-$screen.log" 2>&1 &
   preview_pid=$!
   ready=false
@@ -10,7 +10,7 @@ for screen in home category detail player-menu; do
     sleep 2
     if ! kill -0 "$preview_pid" 2>/dev/null; then cat "build/live-$screen.log"; exit 1; fi
     trace='sdmc:/switch/hongguo-saf/runtime.log'
-    if [ "$screen" = player-menu ]; then
+    if [ "$screen" = player-menu ] || [ "$screen" = player ]; then
       if grep -q 'playback:loaded:' "$trace"; then ready=true; break; fi
     elif [ "$screen" = detail ]; then
       if grep -q 'api:detail:complete' "$trace" && grep -q 'poster:upload_end' "$trace"; then ready=true; break; fi
@@ -18,7 +18,7 @@ for screen in home category detail player-menu; do
     fi
   done
   if [ "$ready" != true ]; then cat "$trace"; kill "$preview_pid"; exit 1; fi
-  sleep 6
+  sleep 12
   import -window root "build/screenshots/live-$screen.png"
   cp "$trace" "build/live-$screen.trace"
   kill "$preview_pid"

@@ -11,7 +11,7 @@ a=p.parse_args()
 r=json.loads(a.probe.read_text())
 commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
 episodes=r.get('episodes',[])
-if not (r.get('decodePassed') and r.get('commit')==commit and {1,4,10,31}.issubset({x.get('episodeNumber') for x in episodes}) and all(x.get('decodePassed') and x.get('audioAndVideo') and x.get('frames',0)>0 and x.get('decodedSeconds',0)>=14 for x in episodes)):
+if not (r.get('decodePassed') and r.get('commit')==commit and {1,4,10,31}.issubset({x.get('episodeNumber') for x in episodes}) and all(x.get('runtime')=='native-shim' and x.get('decodePassed') and x.get('audioAndVideo') and x.get('frames',0)>0 and x.get('decodedSeconds',0)>=14 for x in episodes)):
     raise SystemExit('Multi-episode playback did not pass for this exact commit; NSP was not generated.')
 covers=json.loads(a.covers.read_text())
 if not (covers.get('commit')==commit and covers.get('decodePassed') and covers.get('decoded',0)>=4):

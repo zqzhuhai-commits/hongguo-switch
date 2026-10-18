@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 const fs=require('fs'),vm=require('vm'),cp=require('child_process'),crypto=require('crypto');
 let seq=0;
-async function request(url,opts={}){
+function request(url,opts={}){
  const headerFile=require('path').join(require('os').tmpdir(),'hg-header-'+process.pid+'-'+seq++);
  const args=['-sS','-L','--max-time','25','-D',headerFile,'-w','\n%{http_code}',url];
  for(const [k,v]of Object.entries(opts.headers||{}))args.push('-H',k+': '+v);
@@ -15,6 +15,12 @@ async function request(url,opts={}){
 }
 request.post=(u,b,o)=>request(u,{...o,body:b});
 const ctx={require,Buffer,URL,URLSearchParams,axios:request,console,nativeCrypto:crypto,SwitchConfig:{source:'phone'}};vm.createContext(ctx);
+if(process.env.HONGGUO_NATIVE_SHIM){
+ ctx.__hash=(algo,hex)=>crypto.createHash(algo).update(Buffer.from(hex,'hex')).digest('hex');
+ ctx.__aes=(algo,key,iv,input)=>{const d=crypto.createDecipheriv(algo,Buffer.from(key,'hex'),Buffer.from(iv,'hex'));d.setAutoPadding(false);return Buffer.concat([d.update(Buffer.from(input,'hex')),d.final()]).toString('hex');};
+ ctx.__http=(url,method,headers,body)=>{const r=request(url,{headers:JSON.parse(headers),body:method==='POST'?body:undefined,responseType:'arraybuffer'});return JSON.stringify({status:r.status,headers:r.headers,hex:r.data.toString('hex')});};
+ for(const f of ['deps.js','prelude.js'])vm.runInContext(fs.readFileSync('romfs/'+f,'utf8'),ctx);
+}
 for(const f of ['hongguo.cjs','phone_source.js','adapter.js'])vm.runInContext(fs.readFileSync('romfs/'+f,'utf8'),ctx);
 
 module.exports={ctx,request};

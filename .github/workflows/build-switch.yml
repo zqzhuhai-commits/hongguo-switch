@@ -44,7 +44,7 @@ jobs:
       - name: Decode live HEIC covers with the production image decoder
         run: |
           node scripts/probe-covers.cjs
-          g++ -std=c++17 -Inative tests/poster_decode.cpp native/poster_decode.cpp $(pkg-config --cflags --libs libavcodec libswscale) -o /tmp/poster-decode
+          g++ -std=c++17 -Inative tests/poster_decode.cpp native/poster_decode.cpp $(pkg-config --cflags --libs libavcodec libavutil libswscale) -o /tmp/poster-decode
           /tmp/poster-decode build/cover-probe/*.img
           python3 - <<'PYCODE'
           import json, subprocess

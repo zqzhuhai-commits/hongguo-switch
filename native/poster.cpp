@@ -16,6 +16,9 @@ size_t receive(char* data,size_t size,size_t count,void* context) {
 }
 }
 PosterPixels fetchPoster(const std::string& address,const std::atomic<bool>& alive) {
+#ifdef HONGGUO_PREVIEW
+  if(address.rfind("preview:",0)==0){PosterPixels image;const int index=std::stoi(address.substr(8));image.rgba.resize(image.width*image.height*4);for(int y=0;y<image.height;y++)for(int x=0;x<image.width;x++){const size_t at=(y*image.width+x)*4;image.rgba[at]=45+index*19+(y*35/image.height);image.rgba[at+1]=48+index*10;image.rgba[at+2]=85+index*12+(x*25/image.width);image.rgba[at+3]=255;}return image;}
+#endif
   std::string url=address;if(url.rfind("//",0)==0)url="https:"+url;else if(url.rfind("http://",0)==0)url="https://"+url.substr(7);
   PosterPixels result;
   if(url.rfind("https://",0)!=0 || url.size()>8192 || !alive.load()){trace("poster:invalid_or_cancelled");return result;}trace("poster:download_begin");
@@ -34,11 +37,14 @@ PosterPixels fetchPoster(const std::string& address,const std::atomic<bool>& ali
   const auto status=curl_easy_perform(h);if(status!=CURLE_OK || !alive.load()){trace("poster:curl_error:"+std::to_string((int)status));return result;}trace("poster:download_complete");
   long code=0;curl_easy_getinfo(h,CURLINFO_RESPONSE_CODE,&code);if(code!=200){trace("poster:http_error:"+std::to_string(code));return result;}
   trace("poster:decode_begin");int w=0,height=0,channels=0;
-  if(!stbi_info_from_memory(d.bytes.data(),(int)d.bytes.size(),&w,&height,&channels) || w<1 || height<1 || (int64_t)w*height>6*1024*1024)return result;
+  if(!stbi_info_from_memory(d.bytes.data(),(int)d.bytes.size(),&w,&height,&channels)){
+    result=decodeModernPoster(d.bytes);trace(result.rgba.empty()?"poster:unsupported_or_invalid":"poster:modern_decode_complete");return result;
+  }
+  if(w<1 || height<1 || (int64_t)w*height>6*1024*1024)return result;
   std::unique_ptr<unsigned char,decltype(&stbi_image_free)> source(stbi_load_from_memory(d.bytes.data(),(int)d.bytes.size(),&w,&height,&channels,4),stbi_image_free);
   if(!source || !alive.load()){trace("poster:decode_failed");return result;}
-  // Decode and resize in the worker; the UI only uploads a 104x156 texture.
-  result.height=std::max(1,std::min(208,(int)std::lround(104.0*height/w)));
+  // Decode and resize in the worker; the UI only uploads a 256px-wide texture.
+  result.height=std::max(1,std::min(512,(int)std::lround(256.0*height/w)));
   result.rgba.resize(result.width*result.height*4);
   for(int y=0;y<result.height;y++)for(int x=0;x<result.width;x++) {
     const float sx=std::max(0.0f,(x+0.5f)*w/result.width-0.5f),sy=std::max(0.0f,(y+0.5f)*height/result.height-0.5f);

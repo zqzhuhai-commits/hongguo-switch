@@ -19,6 +19,7 @@ vm.createContext(ctx);vm.runInContext(source,ctx);
  await assert.rejects(ctx.SwitchAPI.open('1',480,false,'missing'),/没有兼容/);await assert.rejects(ctx.SwitchAPI.open('1',480,false,'..'),/参数无效/);
  await ctx.SwitchAPI.open('1',480,true);assert.equal(models,2,'explicit retry refreshes metadata');
  now+=300001;await ctx.SwitchAPI.open('1',480,false);assert.equal(models,3,'expired stream and metadata refreshed');
+ const slice=await ctx.SwitchAPI.downloadSlice('2',0);assert.equal(slice.total,media.length);assert.equal(slice.hex,media.toString('hex'));assert.equal(await ctx.SwitchAPI.read('1',0,99),media.subarray(0,100).toString('hex'),'download must not replace the active player');await assert.rejects(ctx.SwitchAPI.downloadSlice('2',media.length),/范围无效/);
  ctx.SwitchAPI.clearCache();assert.equal(ctx.streamCache.size,0);assert.equal(ctx.videoInfoCache.size,0);
  console.log('PASS: exact quality tier, prefetched opening, prefix/suffix ranges, expiry, forced refresh and cache clearing');
 })().catch(e=>{console.error(e);process.exitCode=1;});

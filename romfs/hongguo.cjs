@@ -422,10 +422,10 @@ async function signedAppGet(values) {
 
 function videoModelUrl() { const query = new URLSearchParams({ ...DEVICE }); return `${VIDEO_API}?${query}`; }
 
-function signedVideoRequest(payload) {
+function signedVideoRequest(payload, endpoint = VIDEO_API) {
     const khronos = Math.floor(Date.now() / 1000); const body = Buffer.from(payload); const ticketBase = Date.now(); let requestTicket = ticketBase; let query = ''; let url = '';
     // branch 1 的签名变体服务端不认：抖动 _rticket 找一个可用的 branch（最多试 32 秒偏移）
-    for (let offset = 0; offset < 32; offset += 1) { requestTicket = ticketBase + offset; const values = { ...DEVICE, ts: String(khronos), _rticket: String(requestTicket) }; query = pythonUrlEncode(values); url = `${VIDEO_API}?${query}`; if (branchOf(url, body, khronos) !== 1) break; }
+    for (let offset = 0; offset < 32; offset += 1) { requestTicket = ticketBase + offset; const values = { ...DEVICE, ts: String(khronos), _rticket: String(requestTicket) }; query = pythonUrlEncode(values); url = `${endpoint}?${query}`; if (branchOf(url, body, khronos) !== 1) break; }
     const random = Math.floor(Math.random() * 65536); const headers = {
         'User-Agent': VIDEO_UA, Accept: 'application/json; charset=utf-8,application/x-protobuf', 'Content-Type': 'application/json; charset=UTF-8',
         'x-xs-from-web': '0', 'x-ss-req-ticket': String(requestTicket), 'x-tt-request-tag': 't=0;n=0', 'sdk-version': '2', 'passport-sdk-version': '50561',
@@ -436,12 +436,15 @@ function signedVideoRequest(payload) {
     return { url, headers, body };
 }
 
-async function requestVideoModel(vid) {
-    const payload = JSON.stringify({
+async function requestVideoModel(vid, batch = false) {
+    const single = {
         video_id: str(vid),
         biz_param: { detail_page_version: 0, device_level: 3, disable_digg_stat: false, disable_video_relate_book: false, need_all_video_definition: true, need_mp4_align: false, use_os_player: false, use_server_dns: false, video_platform: 1024 },
-    });
-    const signed = signedVideoRequest(payload);
+    };
+    const { disable_video_relate_book, ...biz } = single.biz_param;
+    const payload = JSON.stringify(batch ? {biz_param: biz, mixed_video_id_map: {'1004': [str(vid)]}} : single);
+    const endpoint = batch ? VIDEO_API.replace('/video_model/', '/multi_video_model/') : VIDEO_API;
+    const signed = signedVideoRequest(payload, endpoint);
     const resp = await axios.post(signed.url, signed.body, { headers: signed.headers, timeout: 20000, responseType: 'text' });
     const data = jsonBody(resp.data);
     if (resp.status !== 200 || !data || Number(data.Code || data.code || 0) !== 0) throw new Error(`video_model failed: ${data?.Message || data?.message || resp.status}`);
@@ -452,7 +455,7 @@ function modelForVideo(data, vid) {
     const direct = data?.data?.video_model ?? data?.video_model;
     if (direct) { const model = typeof direct === 'string' ? jsonBody(direct) : direct; if (!model || typeof model !== 'object') throw new Error('播放接口返回无效数据'); return model; }
     const map = data?.data || {};
-    const entry = map[str(vid)] || Object.values(map).find((value) => value && typeof value === 'object');
+    const entry = map[str(vid)];
     if (!entry) throw new Error('video_model 没有对应视频');
     const model = typeof entry.video_model === 'string' ? jsonBody(entry.video_model) : entry.video_model;
     if (!model) throw new Error('video_model 内容为空');
@@ -489,14 +492,21 @@ function qualityRows(videoList) {
 async function fetchVideoInfo(vid) {
     const cached = videoInfoCache.get(str(vid));
     if (cached && Date.now() - cached.time < 300000) return cached.value;
-    const model = modelForVideo(await requestVideoModel(vid), vid);
-    const fallback = parseFallback(model.fallback_api);
-    if (!fallback) throw new Error('fallback_api 为空');
-    const outer = jsonBody(await getText(fallback));
-    const info = outer?.video_info?.data || {};
-    const value = { model, info, rows: qualityRows(info.video_list) };
-    videoInfoCache.set(str(vid), { time: Date.now(), value });
-    return value;
+    let lastError;
+    // Match the reference client's batch endpoint when the single-video path
+    // fails, including successful HTTP responses without playable resources.
+    for (const batch of [false, true]) try {
+        const model = modelForVideo(await requestVideoModel(vid, batch), vid);
+        const fallback = parseFallback(model.fallback_api);
+        if (!/^https?:\/\//.test(fallback)) throw new Error('fallback_api 为空或无效');
+        const outer = jsonBody(await getText(fallback));
+        const info = outer?.video_info?.data || {};
+        const value = { model, info, rows: qualityRows(info.video_list) };
+        if (!value.rows.length) throw new Error('播放接口没有可用清晰度');
+        videoInfoCache.set(str(vid), { time: Date.now(), value });
+        return value;
+    } catch (error) { lastError = error; }
+    throw lastError;
 }
 
 // ---------- spade URL 解密与 CENC 内容密钥 ----------

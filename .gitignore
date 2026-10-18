@@ -8,3 +8,8 @@ keys.*
 *.nro
 *.nca
 /private/
+
+/build-preview/
+/sdmc:/
+/romfs:
+__pycache__/

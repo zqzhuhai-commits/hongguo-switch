@@ -36,9 +36,17 @@ const nativeCrypto={
     update(data,encoding){parts.push(Buffer.from(data,encoding));return this;},
     digest(encoding){const bytes=Buffer.concat(parts);const result=algorithm==='sm3'?Buffer.from(SwitchDeps.sm3(Array.from(bytes)),'hex'):Buffer.from(__hash(algorithm,bytes.toString('hex')),'hex');return encoding?result.toString(encoding):result;}
   };},
-  createDecipheriv(algorithm,key,iv){let automatic=true;return {
+  createDecipheriv(algorithm,key,iv){let automatic=true,processed=0;return {
     setAutoPadding(value){automatic=value;return this;},
-    update(data){let out=Buffer.from(__aes(algorithm,Buffer.from(key).toString('hex'),Buffer.from(iv).toString('hex'),Buffer.from(data).toString('hex')),'hex');
+    update(data){data=Buffer.from(data);let counter=Buffer.from(iv),input=data,skip=0;
+      if(algorithm==='aes-128-ctr'){
+        const blocks=Math.floor(processed/16);skip=processed%16;
+        const base=(counter.readBigUInt64BE(0)<<64n)|counter.readBigUInt64BE(8),next=(base+BigInt(blocks))&((1n<<128n)-1n);
+        counter.writeBigUInt64BE(next>>64n,0);counter.writeBigUInt64BE(next&((1n<<64n)-1n),8);
+        if(skip)input=Buffer.concat([Buffer.alloc(skip),data]);
+      }
+      let out=Buffer.from(__aes(algorithm,Buffer.from(key).toString('hex'),counter.toString('hex'),input.toString('hex')),'hex');
+      if(skip)out=out.subarray(skip);processed+=data.length;
       if(automatic && algorithm.endsWith('-cbc') && out.length){const n=out[out.length-1];if(n<1||n>16||n>out.length||!out.subarray(out.length-n).every(b=>b===n))throw new Error('Invalid AES padding');out=out.subarray(0,out.length-n);}return out;},
     final(){return Buffer.alloc(0);}
   };}

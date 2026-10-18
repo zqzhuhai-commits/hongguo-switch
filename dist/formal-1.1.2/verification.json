@@ -1,0 +1,41 @@
+{
+  "version": "1.1.2",
+  "commit": "71197015f64aa191b6d7b476213116d0b7ca09d7",
+  "titleId": "0100F00D53414600",
+  "sha256": "d07789529457da836ed8392787886795082b2589b4729b042ae952e632ca192d",
+  "bytes": 21819608,
+  "archiveChecksPassed": true,
+  "hardwareTested": false,
+  "contents": [
+    {
+      "file": "81f6b909dc46e4f73e23fb280644ac05.nca",
+      "bytes": 134144,
+      "sha256": "81f6b909dc46e4f73e23fb280644ac051b815b77981c4b9fae20a1265aa6d1c6",
+      "contentType": 2
+    },
+    {
+      "file": "77432f09211bc3963911eb535f1ac51c.nca",
+      "bytes": 21665280,
+      "sha256": "77432f09211bc3963911eb535f1ac51ccdd6a8dc7c9b55f2dd7d31a71181e02b",
+      "contentType": 0
+    },
+    {
+      "file": "4b18ac7b42a6ae03d1b6ae282ef8f8c0.cnmt.nca",
+      "bytes": 19968,
+      "sha256": "4b18ac7b42a6ae03d1b6ae282ef8f8c02350cf57edaff62f525111d3da060f65",
+      "contentType": 1
+    }
+  ],
+  "parts": [
+    "Hongguo-Switch-1.1.2.nsp.part01",
+    "Hongguo-Switch-1.1.2.nsp.part02",
+    "Hongguo-Switch-1.1.2.nsp.part03"
+  ],
+  "nroSha256": "3031235d3dd97658e9921ae0972a3987aebd358ad271521797240d8dd9f1cec3",
+  "buildRun": 39098142309,
+  "userHardwareConfirmation": {
+    "confirmed": true,
+    "date": "2026-10-18",
+    "statement": "实机通过"
+  }
+}

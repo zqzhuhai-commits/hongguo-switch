@@ -70,6 +70,7 @@ jobs:
             build/preview-*.log
             build/live-*.log
             build/live-*.trace
+            build/live-*.png
             build/cover-probe.json
             build/video-frame-check.json
           retention-days: 30

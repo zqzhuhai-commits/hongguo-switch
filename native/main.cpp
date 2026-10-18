@@ -184,6 +184,11 @@ public:
     registerAction("下一集",brls::BUTTON_RB,[this](brls::View*){startEpisode(index+1);return true;});registerAction("上一集",brls::BUTTON_LB,[this](brls::View*){startEpisode(index-1);return true;});registerAction("倍速",brls::BUTTON_Y,[this](brls::View*){cycleSpeed();return true;});registerAction("横竖切换",brls::BUTTON_RT,[this](brls::View*){rotateVideo();return true;},false,false);
     mpv=mpv_create();if(!mpv){failed=true;status="播放器初始化失败";return;}
     mpv_set_option_string(mpv,"config","no");mpv_set_option_string(mpv,"terminal","no");mpv_request_log_messages(mpv,"warn");mpv_set_option_string(mpv,"vo","libmpv");auto config=AppConfig::load();prefetchEnabled=config.get("playback.prefetch","yes")=="yes";auto hwdec=config.get("hwdec","auto");if(hwdec!="auto"&&hwdec!="no"&&hwdec!="nvdec"&&hwdec!="nvdec-copy")hwdec="auto";mpv_set_option_string(mpv,"hwdec",hwdec.c_str());mpv_set_option_string(mpv,"audio-channels","stereo");mpv_set_option_string(mpv,"cache","yes");mpv_set_option_string(mpv,"demuxer-max-bytes","16MiB");mpv_set_option_string(mpv,"opengl-glfinish","yes");mpv_set_option_string(mpv,"vd-lavc-dr","yes");
+#ifdef HONGGUO_PREVIEW
+    // Headless CI has neither a hardware decoder nor an audio device. Use a
+    // deterministic software decoder and a clocked null audio sink there.
+    mpv_set_option_string(mpv,"hwdec","no");mpv_set_option_string(mpv,"vd-lavc-dr","no");mpv_set_option_string(mpv,"ao","null");
+#endif
     if(mpv_stream_cb_add_ro(mpv,"saf",nullptr,openStream)<0||mpv_initialize(mpv)<0){failed=true;status="播放器初始化失败";return;}
     mpv_opengl_init_params gl{getProc,nullptr};mpv_render_param params[]={{MPV_RENDER_PARAM_API_TYPE,(void*)MPV_RENDER_API_TYPE_OPENGL},{MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,&gl},{MPV_RENDER_PARAM_INVALID,nullptr}};
     if(mpv_render_context_create(&renderer,mpv,params)<0){failed=true;status="视频渲染初始化失败";return;}startEpisode(index);

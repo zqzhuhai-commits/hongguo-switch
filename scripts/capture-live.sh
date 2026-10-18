@@ -34,5 +34,5 @@ for screen in home category detail player player-menu; do
 done
 python3 - <<'PY'
 from pathlib import Path
-Path('build/screenshots/LIVE-README.txt').write_text('live- 前缀为同一原生界面连接线上目录、HEIC 封面和实际取流后的桌面截图。播放器为《首辅娇娘》第 31 集。其余截图为演示数据布局预览。全部均非 Switch 实机截图。音视频解码结果见 playback-matrix.json，真实封面解码结果见 cover-probe.json。\n')
+Path('build/screenshots/LIVE-README.txt').write_text('live- 前缀为同一原生界面连接线上目录、HEIC 封面和实际取流后的桌面截图。播放器为《首辅娇娘》第 31 集。其余截图为演示数据布局预览。桌面截图使用软件解码和空音频输出，环境没有 Switch GPU 或实体声卡；全部均非 Switch 实机截图。音视频解码结果见 playback-matrix.json，真实封面解码结果见 cover-probe.json。\n')
 PY

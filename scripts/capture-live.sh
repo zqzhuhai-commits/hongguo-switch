@@ -24,6 +24,7 @@ for screen in home category detail player player-menu; do
       import -window root "build/live-$screen-$frame.png"
       sleep 2
     done
+    cp "$trace" "build/live-$screen.trace"
     python3 scripts/verify-video-frames.py "$screen"
   else
     import -window root "build/screenshots/live-$screen.png"

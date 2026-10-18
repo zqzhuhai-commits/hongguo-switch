@@ -9,6 +9,7 @@
 #include "playback_policy.hpp"
 #include "playback_touch.hpp"
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <borealis/views/image.hpp>
 #include <borealis.hpp>
@@ -170,7 +171,7 @@ class Player:public brls::Box {
   mpv_handle* mpv=nullptr;mpv_render_context* renderer=nullptr;VideoSurface videoSurface;std::atomic<bool> framePending{true};
   Json series,episodes;int index=0,speedIndex=1,rotation=0;
   bool failed=false,nextQueued=false,paused=false,errorState=false,menuVisible=false,loaded=false,holdApplied=false;
-  double position=0,duration=0,resumeTarget=0;bool opened=false;uint64_t lastSave=0;size_t retryDelay=0;
+  double position=0,duration=0,resumeTarget=0,bufferedSeconds=0;bool opened=false;uint64_t lastSave=0;size_t retryDelay=0;
   std::string status="正在连接播放源…",lastProgress,selectedTier,selectedQuality="自动";
   bool warmScheduled=false,prefetchEnabled=true,resumePaused=false,videoDiagnosed=false;uint64_t loadStarted=0;
   std::shared_ptr<std::atomic<uint64_t>> warmGeneration=std::make_shared<std::atomic<uint64_t>>(0);
@@ -179,18 +180,20 @@ class Player:public brls::Box {
   PlaybackPolicy policy;brls::Box* controls=nullptr;brls::View* firstControl=nullptr;brls::Label* progress=nullptr;
   static std::string clockText(double value){int seconds=std::max(0,(int)value);char text[32];std::snprintf(text,sizeof(text),"%d:%02d",seconds/60,seconds%60);return text;}
   static uint64_t touchTime(){return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();}
-  void stopHold(){if(holdApplied&&mpv){double rate=hold.previousSpeed;mpv_set_property(mpv,"speed",MPV_FORMAT_DOUBLE,&rate);}holdApplied=false;hold.cancel();}
-  void seekTo(double at){if(!mpv||failed||errorState||!loaded||duration<=0)return;stopHold();const std::string value=std::to_string(std::clamp(at,0.0,duration));const char* cmd[]={"seek",value.c_str(),"absolute",nullptr};if(mpv_command(mpv,cmd)>=0){position=std::clamp(at,0.0,duration);persist();}}
-  void screenTouch(brls::GestureState state,brls::Point point){if(state==brls::GestureState::UNSURE){stopHold();const bool excluded=menuVisible&&(controls->getFrame().pointInside(point)||timeline->getFrame().pointInside(point));hold.begin(!excluded,touchTime(),point.x,point.y);}else if(state==brls::GestureState::STAY){if(!getFrame().pointInside(point)){stopHold();return;}if(hold.tick(touchTime(),point.x,point.y)&&mpv&&!failed&&!errorState&&loaded&&!paused){hold.previousSpeed=1;mpv_get_property(mpv,"speed",MPV_FORMAT_DOUBLE,&hold.previousSpeed);double rate=2;holdApplied=mpv_set_property(mpv,"speed",MPV_FORMAT_DOUBLE,&rate)>=0;}}else if(state==brls::GestureState::END){const bool tap=hold.isTap();stopHold();if(tap)showMenu(!menuVisible);}else if(state==brls::GestureState::INTERRUPTED)stopHold();}
+  // The render thread must never wait for the mpv core (especially after seek).
+  static int setString(mpv_handle* player,const char* name,const char* value){const char* copy=value;return mpv_set_property_async(player,200,name,MPV_FORMAT_STRING,&copy);}
+  void stopHold(){if(holdApplied&&mpv){double rate=hold.previousSpeed;mpv_set_property_async(mpv,0,"speed",MPV_FORMAT_DOUBLE,&rate);}holdApplied=false;hold.cancel();}
+  void seekTo(double at){if(!mpv||failed||errorState||!loaded||duration<=0)return;stopHold();const std::string value=std::to_string(std::clamp(at,0.0,duration));const char* cmd[]={"seek",value.c_str(),"absolute",nullptr};if(mpv_command_async(mpv,0,cmd)>=0){position=std::clamp(at,0.0,duration);persist();}}
+  void screenTouch(brls::GestureState state,brls::Point point){if(state==brls::GestureState::UNSURE){stopHold();const bool excluded=menuVisible&&(controls->getFrame().pointInside(point)||timeline->getFrame().pointInside(point));hold.begin(!excluded,touchTime(),point.x,point.y);}else if(state==brls::GestureState::STAY){if(!getFrame().pointInside(point)){stopHold();return;}if(hold.tick(touchTime(),point.x,point.y)&&mpv&&!failed&&!errorState&&loaded&&!paused){const double rates[]={0.75,1,1.25,1.5,2};hold.previousSpeed=rates[speedIndex];double rate=2;holdApplied=mpv_set_property_async(mpv,0,"speed",MPV_FORMAT_DOUBLE,&rate)>=0;}}else if(state==brls::GestureState::END){const bool tap=hold.isTap();stopHold();if(tap)showMenu(!menuVisible);}else if(state==brls::GestureState::INTERRUPTED)stopHold();}
   void persist(){if(opened&&(position>0||duration>0)&&index>=0&&index<(int)episodes.size())record(series,episodes[index],episodes[index].value("number",index+1)-1,position,duration);}
   void showMenu(bool visible){stopHold();menuVisible=visible;if(!visible)brls::Application::giveFocus(this);controls->setVisibility(visible?brls::Visibility::VISIBLE:brls::Visibility::GONE);timeline->setVisibility(visible?brls::Visibility::VISIBLE:brls::Visibility::GONE);if(visible&&firstControl)brls::Application::giveFocus(firstControl);}
-  void togglePause(){stopHold();if(errorState){retryNow();return;}if(!mpv||failed)return;paused=!paused;int value=paused;mpv_set_property(mpv,"pause",MPV_FORMAT_FLAG,&value);}
-  void seek(int seconds){if(!mpv||failed||errorState)return;const std::string value=std::to_string(seconds);const char* cmd[]={"seek",value.c_str(),"relative",nullptr};mpv_command(mpv,cmd);}
-  void cycleSpeed(){stopHold();if(!mpv||failed)return;const double rates[]={0.75,1,1.25,1.5,2};speedIndex=(speedIndex+1)%5;double rate=rates[speedIndex];mpv_set_property(mpv,"speed",MPV_FORMAT_DOUBLE,&rate);}
-  void rotateVideo(){stopHold();if(!mpv||failed)return;int64_t angle=rotation==0?90:0;if(mpv_set_property(mpv,"video-rotate",MPV_FORMAT_INT64,&angle)>=0)rotation=(int)angle;else status="当前视频暂不支持方向切换";}
+  void togglePause(){stopHold();if(errorState){retryNow();return;}if(!mpv||failed)return;paused=!paused;int value=paused;mpv_set_property_async(mpv,0,"pause",MPV_FORMAT_FLAG,&value);}
+  void seek(int seconds){if(!mpv||failed||errorState)return;const std::string value=std::to_string(seconds);const char* cmd[]={"seek",value.c_str(),"relative",nullptr};mpv_command_async(mpv,0,cmd);}
+  void cycleSpeed(){stopHold();if(!mpv||failed)return;const double rates[]={0.75,1,1.25,1.5,2};speedIndex=(speedIndex+1)%5;double rate=rates[speedIndex];mpv_set_property_async(mpv,0,"speed",MPV_FORMAT_DOUBLE,&rate);}
+  void rotateVideo(){stopHold();if(!mpv||failed)return;int64_t angle=rotation==0?90:0;if(mpv_set_property_async(mpv,0,"video-rotate",MPV_FORMAT_INT64,&angle)>=0)rotation=(int)angle;else status="当前视频暂不支持方向切换";}
   void retryNow(){if(mpv&&renderer&&!failed)startEpisode(index,false,true);}
   void scheduleRetry(){stopHold();timeline->reset();errorState=true;if(policy.pending)return;auto wait=policy.scheduleRetry();if(!wait){status="本集暂时无法播放，可重试或选择其他分集。";showMenu(true);return;}trace("playback:retry_scheduled:"+std::to_string(policy.retries));status="正在重新获取播放源（重试 "+std::to_string(policy.retries)+"/3）…";auto flag=alive;const auto token=policy.generation;retryDelay=brls::delay(*wait,[this,flag,token]{if(!flag->load())return;if(policy.consumeRetry(token)){retryDelay=0;startEpisode(index,true);}});}
-  void startEpisode(int target,bool retry=false,bool fresh=false,bool preservePause=false){if(!mpv||!renderer||failed||target<0||target>=(int)episodes.size())return;stopHold();timeline->reset();videoSurface.invalidate();framePending=true;videoDiagnosed=false;if(retryDelay){brls::cancelDelay(retryDelay);retryDelay=0;}resumePaused=preservePause?paused:(retry?resumePaused:false);if(target!=index){selectedTier.clear();selectedQuality="自动";}policy.begin(retry);warmGeneration->store(policy.generation);warmScheduled=false;loadStarted=touchTime();persist();index=target;position=0;duration=0;opened=true;resumeTarget=0;for(const auto& row:library["history"])if(row.value("episodeId",std::string())==episodes[index].value("id",std::string()))resumeTarget=row.value("position",0.0)/1000;nextQueued=false;paused=false;errorState=false;loaded=false;int unpause=0;mpv_set_property(mpv,"pause",MPV_FORMAT_FLAG,&unpause);status=retry?"正在重新连接（重试 "+std::to_string(policy.retries)+"/3）…":"正在连接播放源…";{std::lock_guard<std::mutex> lock(playbackErrorMutex);playbackErrorId.clear();playbackError.clear();}const auto url=episodes[index].value("localPath",std::string()).empty()?"saf://"+episodes[index].at("id").get<std::string>()+"/"+selectedTier+"/"+((retry||fresh)?"1":"0"):episodes[index].at("localPath").get<std::string>();const char* command[]={"loadfile",url.c_str(),"replace",nullptr};trace("playback:load_begin");if(mpv_command(mpv,command)<0)scheduleRetry();}
+  void startEpisode(int target,bool retry=false,bool fresh=false,bool preservePause=false){if(!mpv||!renderer||failed||target<0||target>=(int)episodes.size())return;stopHold();timeline->reset();videoSurface.invalidate();framePending=true;videoDiagnosed=false;if(retryDelay){brls::cancelDelay(retryDelay);retryDelay=0;}resumePaused=preservePause?paused:(retry?resumePaused:false);if(target!=index){selectedTier.clear();selectedQuality="自动";}policy.begin(retry);warmGeneration->store(policy.generation);warmScheduled=false;loadStarted=touchTime();persist();index=target;position=0;duration=0;bufferedSeconds=0;opened=true;resumeTarget=0;for(const auto& row:library["history"])if(row.value("episodeId",std::string())==episodes[index].value("id",std::string()))resumeTarget=row.value("position",0.0)/1000;nextQueued=false;paused=false;errorState=false;loaded=false;int unpause=0;mpv_set_property_async(mpv,0,"pause",MPV_FORMAT_FLAG,&unpause);status=retry?"正在重新连接（重试 "+std::to_string(policy.retries)+"/3）…":"正在连接播放源…";{std::lock_guard<std::mutex> lock(playbackErrorMutex);playbackErrorId.clear();playbackError.clear();}const auto url=episodes[index].value("localPath",std::string()).empty()?"saf://"+episodes[index].at("id").get<std::string>()+"/"+selectedTier+"/"+((retry||fresh)?"1":"0"):episodes[index].at("localPath").get<std::string>();const char* command[]={"loadfile",url.c_str(),"replace",nullptr};trace("playback:load_begin");if(mpv_command_async(mpv,0,command)<0)scheduleRetry();}
   void showQualities(){
     if(!mpv||failed)return;stopHold();const auto id=episodes[index].at("id").get<std::string>();auto flag=alive;
     auto* list=new brls::Box(brls::Axis::COLUMN);auto* picker=::frame(list,"选择清晰度");back(picker);auto pickerFlag=picker->alive;
@@ -202,15 +205,15 @@ class Player:public brls::Box {
     });});
   }
   void playbackSettings(){
-    if(!mpv||failed)return;stopHold();const bool wasPaused=paused;int pause=1;mpv_set_property(mpv,"pause",MPV_FORMAT_FLAG,&pause);
-    mpv_get_property(mpv,"time-pos",MPV_FORMAT_DOUBLE,&position);persist();auto flag=alive;const auto before=AppConfig::load();
+    if(!mpv||failed)return;stopHold();const bool wasPaused=paused;int pause=1;mpv_set_property_async(mpv,0,"pause",MPV_FORMAT_FLAG,&pause);
+    persist();auto flag=alive;const auto before=AppConfig::load();
     openSettings([this,flag,wasPaused,before]{if(!*flag)return;auto config=AppConfig::load();prefetchEnabled=config.prefetch();policy.continuous=config.continuous();paused=wasPaused;
-      if(config.decoder()==before.decoder()&&config.profile()==before.profile()){int pause=wasPaused;mpv_set_property(mpv,"pause",MPV_FORMAT_FLAG,&pause);return;}
-      bool ok=mpv_set_property_string(mpv,"hwdec",config.decoder().c_str())>=0;
-      ok=(mpv_set_property_string(mpv,"vd-lavc-dr",config.directRendering().c_str())>=0)&&ok;
-      ok=(mpv_set_property_string(mpv,"demuxer-max-bytes",config.cacheBytes().c_str())>=0)&&ok;
+      if(config.decoder()==before.decoder()&&config.profile()==before.profile()){int pause=wasPaused;mpv_set_property_async(mpv,0,"pause",MPV_FORMAT_FLAG,&pause);return;}
+      bool ok=setString(mpv,"hwdec",config.decoder().c_str())>=0;
+      ok=(setString(mpv,"vd-lavc-dr",config.directRendering().c_str())>=0)&&ok;
+      ok=(setString(mpv,"demuxer-max-bytes",config.cacheBytes().c_str())>=0)&&ok;
 #ifdef HONGGUO_PREVIEW
-      mpv_set_property_string(mpv,"hwdec","no");mpv_set_property_string(mpv,"vd-lavc-dr","no");
+      setString(mpv,"hwdec","no");setString(mpv,"vd-lavc-dr","no");
 #endif
       startEpisode(index,false,false,true);
       if(!ok)message("部分设置需重新打开播放器后生效，设置已保存。");
@@ -241,19 +244,22 @@ public:
     mpv_set_option_string(mpv,"hwdec","no");mpv_set_option_string(mpv,"vd-lavc-dr","no");mpv_set_option_string(mpv,"ao","null");
 #endif
     if(mpv_stream_cb_add_ro(mpv,"saf",nullptr,openStream)<0||mpv_initialize(mpv)<0){failed=true;status="播放器初始化失败";return;}
+    mpv_observe_property(mpv,1,"time-pos",MPV_FORMAT_DOUBLE);mpv_observe_property(mpv,2,"duration",MPV_FORMAT_DOUBLE);mpv_observe_property(mpv,3,"demuxer-cache-duration",MPV_FORMAT_DOUBLE);
     mpv_opengl_init_params gl{getProc,nullptr};mpv_render_param params[]={{MPV_RENDER_PARAM_API_TYPE,(void*)MPV_RENDER_API_TYPE_OPENGL},{MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,&gl},{MPV_RENDER_PARAM_INVALID,nullptr}};
     if(mpv_render_context_create(&renderer,mpv,params)<0){failed=true;status="视频渲染初始化失败";return;}mpv_render_context_set_update_callback(renderer,[](void* opaque){static_cast<Player*>(opaque)->framePending.store(true);},this);startEpisode(index);
   }
   ~Player(){stopHold();*alive=false;if(retryDelay)brls::cancelDelay(retryDelay);persist();if(renderer){mpv_render_context_set_update_callback(renderer,nullptr,nullptr);mpv_render_context_free(renderer);}if(mpv)mpv_terminate_destroy(mpv);appletSetMediaPlaybackState(false);}
   void draw(NVGcontext* vg,float x,float y,float w,float h,brls::Style style,brls::FrameContext* ctx)override{
-    if(mpv&&!failed){for(int count=0;count<30;count++){mpv_event* event=mpv_wait_event(mpv,0);if(event->event_id==MPV_EVENT_NONE)break;if(event->event_id==MPV_EVENT_FILE_LOADED){status="";errorState=false;loaded=true;trace("playback:loaded:ms="+std::to_string(touchTime()-loadStarted));if(resumeTarget>0){const std::string at=std::to_string(resumeTarget);const char* seekCommand[]={"seek",at.c_str(),"absolute",nullptr};mpv_command(mpv,seekCommand);resumeTarget=0;}if(resumePaused){int p=1;mpv_set_property(mpv,"pause",MPV_FORMAT_FLAG,&p);paused=true;resumePaused=false;}}
+    if(mpv&&!failed){for(int count=0;count<30;count++){mpv_event* event=mpv_wait_event(mpv,0);if(event->event_id==MPV_EVENT_NONE)break;if(event->event_id==MPV_EVENT_PROPERTY_CHANGE){auto* value=(mpv_event_property*)event->data;if(value&&value->format==MPV_FORMAT_DOUBLE&&value->data){double number=*(double*)value->data;if(std::isfinite(number)){if(event->reply_userdata==1)position=number;else if(event->reply_userdata==2)duration=number;else if(event->reply_userdata==3)bufferedSeconds=number;}}}
+      if(event->event_id==MPV_EVENT_GET_PROPERTY_REPLY){auto* value=(mpv_event_property*)event->data;if(value&&value->name&&value->format==MPV_FORMAT_STRING&&value->data&&*(char**)value->data)trace("video:"+std::string(value->name)+":"+std::string(*(char**)value->data));}
+      if(event->event_id==MPV_EVENT_SET_PROPERTY_REPLY&&event->error<0){trace("playback:option_error:"+std::to_string(event->error));if(event->reply_userdata==200)status="部分设置未能应用，请尝试重新打开播放器。";}
+      if(event->event_id==MPV_EVENT_FILE_LOADED){status="";errorState=false;loaded=true;trace("playback:loaded:ms="+std::to_string(touchTime()-loadStarted));if(resumeTarget>0){const std::string at=std::to_string(resumeTarget);const char* seekCommand[]={"seek",at.c_str(),"absolute",nullptr};mpv_command_async(mpv,0,seekCommand);resumeTarget=0;}if(resumePaused){int p=1;mpv_set_property_async(mpv,0,"pause",MPV_FORMAT_FLAG,&p);paused=true;resumePaused=false;}}
       if(event->event_id==MPV_EVENT_LOG_MESSAGE){auto* log=(mpv_event_log_message*)event->data;std::string line=log->text?log->text:"";for(size_t at=0;(at=line.find("http",at))!=std::string::npos;){auto end=line.find_first_of(" \t\r\n",at);line.replace(at,end==std::string::npos?line.size()-at:end-at,"[URL]");at+=5;}trace("mpv:"+std::string(log->prefix?log->prefix:"")+":"+line.substr(0,240));}
       if(event->event_id==MPV_EVENT_END_FILE){auto* end=(mpv_event_end_file*)event->data;if(end&&end->reason==MPV_END_FILE_REASON_ERROR){trace("playback:failed");scheduleRetry();}else if(end&&end->reason==MPV_END_FILE_REASON_EOF&&!nextQueued){nextQueued=true;if(duration>0)position=duration;persist();const int next=policy.nextEpisode(index,(int)episodes.size());if(next>=0){auto flag=alive;const auto generation=policy.generation;brls::sync([this,flag,next,generation]{if(flag->load()&&generation==policy.generation)startEpisode(next);});}else{status=index+1==(int)episodes.size()?"本剧已播放完毕":"本集已结束，自动连播已关闭";showMenu(true);}}}
-    }mpv_get_property(mpv,"time-pos",MPV_FORMAT_DOUBLE,&position);mpv_get_property(mpv,"duration",MPV_FORMAT_DOUBLE,&duration);if(armGetSystemTick()-lastSave>armNsToTicks(10000000000ULL)){lastSave=armGetSystemTick();persist();}}
-    if(loaded&&position>3&&!videoDiagnosed){videoDiagnosed=true;for(const char* prop:{"video-codec","video-format","video-params/w","video-params/h","video-out-params/w","video-out-params/h","vid","estimated-vf-fps","frame-drop-count","decoder-frame-drop-count","hwdec-current"}){char* value=mpv_get_property_string(mpv,prop);trace("video:"+std::string(prop)+":"+(value?value:"unavailable"));mpv_free(value);}}
+    }if(armGetSystemTick()-lastSave>armNsToTicks(10000000000ULL)){lastSave=armGetSystemTick();persist();}}
+    if(loaded&&position>3&&!videoDiagnosed){videoDiagnosed=true;for(const char* prop:{"video-codec","video-format","video-params/w","video-params/h","video-out-params/w","video-out-params/h","vid","estimated-vf-fps","frame-drop-count","decoder-frame-drop-count","hwdec-current"}){mpv_get_property_async(mpv,100,prop,MPV_FORMAT_STRING);}}
     if(!episodes[index].contains("localPath")&&prefetchEnabled&&loaded&&!errorState&&!warmScheduled&&duration-position>12&&position>2&&index+1<(int)episodes.size()){
-      double buffered=0;mpv_get_property(mpv,"demuxer-cache-duration",MPV_FORMAT_DOUBLE,&buffered);
-      if(buffered>=10){auto flag=alive;auto generation=warmGeneration;const auto token=policy.generation;const auto id=episodes[index+1].at("id").get<std::string>();const std::string tier;
+      if(bufferedSeconds>=10){auto flag=alive;auto generation=warmGeneration;const auto token=policy.generation;const auto id=episodes[index+1].at("id").get<std::string>();const std::string tier;
         warmScheduled=apiBackgroundTask([flag,generation,token,id,tier]{if(!*flag||generation->load()!=token)return;try{const auto r=backend->call("prefetch",Json::array({id,480,tier}));trace(r.value("ready",false)?"prefetch:ready":"prefetch:deferred");}catch(...){trace("prefetch:deferred");}});
       }
     }

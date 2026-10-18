@@ -54,6 +54,7 @@ public:
 };
 static brls::Box* quickButton(const std::string& name,const std::string& note,std::function<void()> fn){auto* box=new ClickableBox(brls::Axis::COLUMN);box->setWidth(220);box->setHeight(88);box->setPadding(12);box->setMarginRight(12);box->setBackgroundColor(nvgRGB(35,38,49));for(const auto& text:{name,note}){auto* label=new brls::Label();label->setText(text);label->setWidth(196);label->setFontSize(text==name?20:14);label->setHorizontalAlign(brls::HorizontalAlign::LEFT);box->addView(label);}box->registerClickAction([fn](brls::View*){fn();return true;});return box;}
 static brls::DetailCell* cell(const std::string& name,const std::string& note,std::function<void()> fn){auto* v=new brls::DetailCell();v->setText(name);v->setDetailText(note);v->addGestureRecognizer(new brls::TapGestureRecognizer(v));v->registerClickAction([fn](brls::View*){fn();return true;});return v;}
+#include "video_surface.hpp"
 static std::atomic<int> posterJobs{0};
 class PosterImage:public brls::Image {
   std::string url,badge;bool started=false,finished=false;int attempts=0;std::chrono::steady_clock::time_point retryAt{};
@@ -131,7 +132,7 @@ public:
 };
 
 class Player:public brls::Box {
-  mpv_handle* mpv=nullptr;mpv_render_context* renderer=nullptr;
+  mpv_handle* mpv=nullptr;mpv_render_context* renderer=nullptr;VideoSurface videoSurface;
   Json series,episodes;int index=0,speedIndex=1,rotation=0;
   bool failed=false,nextQueued=false,paused=false,errorState=false,menuVisible=false,loaded=false,holdApplied=false;
   double position=0,duration=0,resumeTarget=0;bool opened=false;uint64_t lastSave=0;size_t retryDelay=0;
@@ -206,13 +207,24 @@ public:
         warmScheduled=apiBackgroundTask([flag,generation,token,id,tier]{if(!*flag||generation->load()!=token)return;try{const auto r=backend->call("prefetch",Json::array({id,480,tier}));trace(r.value("ready",false)?"prefetch:ready":"prefetch:deferred");}catch(...){trace("prefetch:deferred");}});
       }
     }
-    nvgEndFrame(vg);GLint fbo=0;glGetIntegerv(GL_FRAMEBUFFER_BINDING,&fbo);glBindFramebuffer(GL_FRAMEBUFFER,fbo);glViewport(0,0,brls::Application::windowWidth,brls::Application::windowHeight);glDisable(GL_SCISSOR_TEST);glDisable(GL_STENCIL_TEST);glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
-    if(renderer&&!failed){mpv_opengl_fbo surface{fbo,(int)brls::Application::windowWidth,(int)brls::Application::windowHeight,0};int flip=1;mpv_render_param params[]={{MPV_RENDER_PARAM_OPENGL_FBO,&surface},{MPV_RENDER_PARAM_FLIP_Y,&flip},{MPV_RENDER_PARAM_INVALID,nullptr}};mpv_render_context_render(renderer,params);mpv_render_context_report_swap(renderer);}else{glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT);}
-    // libmpv may leave an intermediate framebuffer bound. Restore our target
-    // before the alpha clear and NanoVG overlay, as in the upstream player.
-    glBindFramebuffer(GL_FRAMEBUFFER,fbo);glViewport(0,0,brls::Application::windowWidth,brls::Application::windowHeight);
-    glColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
-    const auto factor=brls::Application::getPlatform()->getVideoContext()->getScaleFactor();nvgBeginFrame(vg,brls::Application::windowWidth,brls::Application::windowHeight,factor);nvgScale(vg,brls::Application::windowScale,brls::Application::windowScale);
+    // Compose the video as a NanoVG image. Mixing immediate mpv output with
+    // deferred UI draws on the window framebuffer can erase an otherwise
+    // correctly decoded frame, depending on the active overlay/GL state.
+    nvgEndFrame(vg);GLint target=0;glGetIntegerv(GL_FRAMEBUFFER_BINDING,&target);
+    const int physicalWidth=brls::Application::windowWidth,physicalHeight=brls::Application::windowHeight;
+    const bool surfaceReady=renderer&&!failed&&videoSurface.ensure(vg,physicalWidth,physicalHeight);
+    if(surfaceReady){
+      glBindFramebuffer(GL_FRAMEBUFFER,videoSurface.target());glViewport(0,0,physicalWidth,physicalHeight);
+      glDisable(GL_SCISSOR_TEST);glDisable(GL_STENCIL_TEST);glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glDisable(GL_CULL_FACE);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+      mpv_opengl_fbo surface{(int)videoSurface.target(),physicalWidth,physicalHeight,GL_RGBA8};int flip=1;
+      mpv_render_param params[]={{MPV_RENDER_PARAM_OPENGL_FBO,&surface},{MPV_RENDER_PARAM_FLIP_Y,&flip},{MPV_RENDER_PARAM_INVALID,nullptr}};
+      mpv_render_context_render(renderer,params);
+      glBindFramebuffer(GL_FRAMEBUFFER,videoSurface.target());glDisable(GL_SCISSOR_TEST);glColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+      mpv_render_context_report_swap(renderer);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER,target);glViewport(0,0,physicalWidth,physicalHeight);
+    const auto factor=brls::Application::getPlatform()->getVideoContext()->getScaleFactor();nvgBeginFrame(vg,physicalWidth,physicalHeight,factor);nvgScale(vg,brls::Application::windowScale,brls::Application::windowScale);
+    if(surfaceReady)videoSurface.paint(vg,x,y,w,h);
     nvgFontFaceId(vg,brls::Application::getDefaultFont());nvgFontSize(vg,22);nvgFillColor(vg,nvgRGBA(255,255,255,240));nvgTextAlign(vg,NVG_ALIGN_LEFT|NVG_ALIGN_TOP);
     const std::string title=series.value("title",std::string())+" · 第 "+std::to_string(index+1)+" 集";nvgTextBox(vg,28,20,1224,title.c_str(),nullptr);if(!status.empty())nvgTextBox(vg,60,180,1160,status.c_str(),nullptr);
     timeline->update(position,duration,loaded&&!errorState&&!failed);if(holdApplied){nvgTextAlign(vg,NVG_ALIGN_CENTER|NVG_ALIGN_TOP);nvgText(vg,640,90,"2倍速播放中 · 松开恢复",nullptr);}

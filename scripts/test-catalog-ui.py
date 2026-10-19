@@ -30,14 +30,14 @@ for screen in ['home','search']:
             return bool(windows)
         wait_for(window_ready)
         sp.run(['xdotool','windowfocus','--sync',windows[0]],check=True)
+        time.sleep(.6)  # Activity entrance animation temporarily blocks input.
         if screen=='home':
             # Tabs stay fixed above the scroll viewport. Select Latest then enter the grid.
             click(230,125);key('Down')
         else:key('Down')
-        for _ in range(80):
-            if 'catalog:page=3:added=8:total=42' in read():break
-            key('Down')
-        wait_for(lambda text:'catalog:page=3:added=8:total=42' in text)
+        sp.run(['xdotool','keydown','Down'],check=True)
+        try:wait_for(lambda text:'catalog:page=3:added=8:total=42' in text,seconds=35)
+        finally:sp.run(['xdotool','keyup','Down'],check=True)
         time.sleep(.3)
         sp.run(['import','-window','root',f'build/screenshots/{screen}-infinite.png'],check=True)
         before=read().count('catalog:page=')

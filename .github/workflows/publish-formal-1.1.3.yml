@@ -1,0 +1,74 @@
+name: Publish Hongguo Switch 1.1.3 formal release
+on:
+  push:
+    branches: [main]
+    paths: ['dist/formal-1.1.3/**', '.github/workflows/publish-formal-1.1.3.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify approved source and successful original build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code 86a28a9d5209fa7fbb18d37c6b20fc1097567958 HEAD -- native romfs CMakeLists.txt npdm.json icon.jpg scripts tests
+          gh api "repos/$GH_REPO/actions/runs/39184006767" > /tmp/approved-run.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('/tmp/approved-run.json'))
+          assert r['head_sha']=='86a28a9d5209fa7fbb18d37c6b20fc1097567958' and r['conclusion']=='success'
+          PY
+          python3 dist/formal-1.1.3/assemble_nsp.py
+          gh run download 39184006767 --repo "$GH_REPO" --name switch-package-input --dir /tmp/approved-build
+          gh run download 39184006767 --repo "$GH_REPO" --name native-ui-previews --dir /tmp/approved-ui
+      - name: Prepare formal assets without changing the approved program
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,shutil,zipfile
+          source=Path('dist/formal-1.1.3');out=Path('/tmp/formal-release');out.mkdir()
+          record=json.loads((source/'verification.json').read_text())
+          assert record['userHardwareConfirmation']['confirmed'] is True
+          shutil.copy2(source/'Hongguo-Switch-1.1.3.nsp',out/'Hongguo-Switch-1.1.3.nsp')
+          nro=Path('/tmp/approved-build/hongguo-switch.nro')
+          assert hashlib.sha256(nro.read_bytes()).hexdigest()==record['nroSha256']
+          shutil.copy2(nro,out/'Hongguo-Switch-1.1.3.nro')
+          for name in ['playback-matrix.json','cover-probe.json','video-frame-check.json','NSP-verification.json','verification.json','catalog-probe.json','catalog-ui-check.json']:
+              r=json.loads((source/name).read_text());assert r['commit']==record['commit']
+              shutil.copy2(source/name,out/name)
+          assert json.loads((out/'playback-matrix.json').read_text())['decodePassed']
+          assert json.loads((out/'cover-probe.json').read_text())['decodePassed']
+          assert json.loads((out/'video-frame-check.json').read_text())['displayPassed']
+          assert json.loads((out/'catalog-probe.json').read_text())['passed']
+          assert json.loads((out/'catalog-ui-check.json').read_text())['passed']
+          with zipfile.ZipFile(out/'Hongguo-Switch-1.1.3-UI-Screenshots.zip','w',zipfile.ZIP_DEFLATED) as z:
+              images=list(Path('/tmp/approved-ui/screenshots').glob('*.png'))
+              assert len(images)>=20
+              for p in sorted(images):z.write(p,('live/' if p.name.startswith('live-') else 'demo/')+p.name)
+              z.writestr('README.txt','live 为线上数据，其余为演示数据。全部截图来自与 Switch 共用的原生桌面界面，桌面固定软件解码和空音频输出；不是 Switch 实机截图。用户已另行确认 Switch 实机通过。')
+          shutil.copy2(source/'RELEASE-NOTES.md',out/'INSTALL-README.md')
+          binaries=['Hongguo-Switch-1.1.3.nsp','Hongguo-Switch-1.1.3.nro','Hongguo-Switch-1.1.3-UI-Screenshots.zip']
+          (out/'SHA256SUMS-Binaries.txt').write_text(''.join(hashlib.sha256((out/name).read_bytes()).hexdigest()+'  '+name+'\n' for name in binaries))
+          with zipfile.ZipFile(out/'Hongguo-Switch-1.1.3-Install.zip','w',zipfile.ZIP_DEFLATED) as z:
+              for p in sorted(out.iterdir()):
+                  if p.name!='Hongguo-Switch-1.1.3-Install.zip':z.write(p,p.name)
+          (out/'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in sorted(out.iterdir()) if p.name!='SHA256SUMS.txt'))
+          PY
+      - name: Upload every asset before publishing the formal release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release create v1.1.3 /tmp/formal-release/* --repo "$GH_REPO" --target "$GITHUB_SHA" --draft --title '红果短剧 Switch 1.1.3 正式版' --notes-file dist/formal-1.1.3/RELEASE-NOTES.md
+          gh release edit v1.1.3 --repo "$GH_REPO" --draft=false --prerelease=false --latest

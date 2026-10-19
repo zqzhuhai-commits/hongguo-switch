@@ -1,7 +1,7 @@
 name: Build 红果短剧Switch客户端
 on:
   push:
-    branches: [main, full-158-source, latency-quality, fix/playback-fallback]
+    branches: [main, full-158-source, latency-quality, fix/playback-fallback, fix/infinite-catalog]
     paths: ['native/**', 'romfs/**', 'CMakeLists.txt', 'scripts/**', 'npdm.json', 'icon.jpg', 'tests/**', '.github/workflows/build-switch.yml']
   workflow_dispatch:
 permissions:
@@ -25,12 +25,16 @@ jobs:
       - name: Prepare decoder
         run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
       - name: Decode real audio and video through the actual adapter
-        run: node scripts/probe-matrix.cjs
+        run: |
+          node scripts/probe-matrix.cjs
+          HONGGUO_NATIVE_SHIM=1 node scripts/probe-catalog.cjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: playback-probe
-          path: build/playback-*.json
+          path: |
+            build/playback-*.json
+            build/catalog-probe.json
           retention-days: 30
   screenshots:
     runs-on: ubuntu-24.04
@@ -40,7 +44,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install preview dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config libglfw3-dev libmpv-dev libavcodec-dev libswscale-dev libcurl4-openssl-dev libmbedtls-dev libdbus-1-dev xvfb xauth imagemagick ffmpeg python3-pil fonts-noto-cjk libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config libglfw3-dev libmpv-dev libavcodec-dev libswscale-dev libcurl4-openssl-dev libmbedtls-dev libdbus-1-dev xvfb xauth imagemagick ffmpeg python3-pil xdotool fonts-noto-cjk libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
       - name: Decode live HEIC covers with the production image decoder
         run: |
           node scripts/probe-covers.cjs
@@ -60,6 +64,7 @@ jobs:
       - name: Capture all interface previews
         run: |
           xvfb-run -a -s '-screen 0 1280x720x24' sh scripts/capture-preview.sh
+          xvfb-run -a -s '-screen 0 1280x720x24' python3 scripts/test-catalog-ui.py
           xvfb-run -a -s '-screen 0 1280x720x24' sh scripts/capture-live.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -73,6 +78,9 @@ jobs:
             build/live-*.png
             build/cover-probe.json
             build/video-frame-check.json
+            build/catalog-ui-check.json
+            build/catalog-*.trace
+            build/catalog-*.log
           retention-days: 30
   build:
     needs: protocol-tests
@@ -89,6 +97,7 @@ jobs:
           g++ -std=c++17 -Inative tests/playback_policy.cpp -o /tmp/policy && /tmp/policy
           g++ -std=c++17 -Inative tests/playback_touch.cpp -o /tmp/touch && /tmp/touch
           g++ -std=c++17 -Inative tests/download_queue.cpp -o /tmp/downloads && /tmp/downloads
+          g++ -std=c++17 -Inative tests/catalog_paging.cpp -o /tmp/catalog && /tmp/catalog
           g++ -std=c++17 -Inative tests/app_config.cpp -o /tmp/config && /tmp/config
           g++ -std=c++17 -Inative tests/episode_groups.cpp -o /tmp/groups && /tmp/groups
           g++ -std=c++17 -Inative tests/stream_request.cpp -o /tmp/request && /tmp/request

@@ -1,6 +1,9 @@
 """Exercise actual desktop key input, append position, category reset and search."""
 from pathlib import Path
 import subprocess as sp, time, os, re, json
+Path('build/screenshots').mkdir(parents=True,exist_ok=True)
+Path('sdmc:').mkdir(exist_ok=True)
+if not Path('romfs:').exists():Path('romfs:').symlink_to('romfs',target_is_directory=True)
 trace=Path('sdmc:/switch/hongguo-saf/runtime.log')
 results={}
 def read():return trace.read_text() if trace.exists() else ''

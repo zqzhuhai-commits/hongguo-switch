@@ -321,12 +321,12 @@ class CatalogGrid:public brls::ScrollingFrame {
   void request(bool retry=false){
     if(!automatic)return;auto ticket=paging.begin(retry);if(!ticket)return;footerState();auto flag=alive;auto loader=fetch;
     const bool queued=apiTask([this,flag,loader,ticket=*ticket]{Json response,rows;bool ok=false;try{response=loader(ticket.page);rows=validRows(response);ok=true;}catch(...){}brls::sync([this,flag,ticket,response=std::move(response),rows=std::move(rows),ok]{
-      if(!*flag)return;if(!ok){if(paging.fail(ticket)){footerState();trace("catalog:failed:page="+std::to_string(ticket.page));}return;}
+      if(!*flag)return;if(!ok){if(paging.fail(ticket)){footerState();if(changed)changed();trace("catalog:failed:page="+std::to_string(ticket.page));}return;}
       std::vector<std::string> ids;for(const auto& row:rows)ids.push_back(row["id"].get<std::string>());auto indices=paging.complete(ticket,ids,response["hasMore"].get<bool>());if(!indices)return;append(rows,*indices);trace("catalog:page="+std::to_string(ticket.page)+":added="+std::to_string(indices->size())+":total="+std::to_string(cards.size()));
     });});
     if(!queued){paging.fail(*ticket);footerState();}
   }
-  void clearGrid(){paging.reset();scheduled=false;lastRow=nullptr;footer->setCustomNavigationRoute(brls::FocusDirection::UP,footer);grid->clearViews();cards.clear();posters.clear();savedOffset=0;restoreOffset=true;}
+  void clearGrid(){paging.reset();scheduled=false;lastRow=nullptr;footer->setCustomNavigationRoute(brls::FocusDirection::UP,footer);grid->clearViews();cards.clear();posters.clear();contentOffsetY.stop();setContentOffsetY(0,false);savedOffset=0;restoreOffset=true;}
 public:
   CatalogGrid(size_t columns,float cardWidth,float gap,std::function<void()> changed={},const std::string& title="",bool padded=false):columns(columns),cardWidth(cardWidth),gap(gap),changed(std::move(changed)){
     setGrow(1);setShrink(1);content=new brls::Box(brls::Axis::COLUMN);if(padded)content->setPadding(20,50,30,50);else content->setPadding(4,0,28,0);
@@ -334,12 +334,20 @@ public:
     grid=new brls::Box(brls::Axis::COLUMN);content->addView(grid);footer=cell("正在加载…","",[this]{request(true);});footer->setShrink(0);content->addView(footer);setContentView(content);
   }
   const std::vector<brls::View*>& tiles()const{return cards;}
+  brls::View* tail()const{return footer;}
   void reset(std::function<Json(int)> loader){clearGrid();fetch=std::move(loader);automatic=true;request();}
   void showSaved(const Json& items,const std::string& emptyMessage){clearGrid();automatic=false;std::vector<size_t> all;for(size_t i=0;i<items.size();++i)if(items[i].is_object()&&items[i].contains("id")&&items[i].contains("title"))all.push_back(i);paging.more=false;append(items,all);if(cards.empty())footer->setText(emptyMessage);}
   void draw(NVGcontext* vg,float x,float y,float w,float h,brls::Style style,brls::FrameContext* ctx)override{
     if(restoreOffset){const auto before=savedOffset;contentOffsetY.stop();updateScrollingOnNextFrame=false;setContentOffsetY(savedOffset,false);restoreOffset=false;trace("catalog:offset:requested="+std::to_string(before)+":actual="+std::to_string(getContentOffsetY()));}
     // Retain card metadata, but release distant poster textures on the UI thread.
     for(auto* poster:posters)poster->releaseOutside(y-h*2,y+h*3);
+    // Nested row focus changes can clear the framework's childFocused flag.
+    // Recompute ownership and keep held vertical input scrolling every frame.
+    auto* current=brls::Application::getCurrentFocus();bool ownsFocus=false;
+    for(auto* parent=current;parent;parent=parent->getParent())if(parent==this){ownsFocus=true;break;}
+    childFocused=ownsFocus&&current!=this;
+    const auto& input=brls::Application::getControllerState();
+    if(ownsFocus&&brls::Application::getInputType()==brls::InputType::GAMEPAD&&(input.buttons[brls::BUTTON_NAV_DOWN]||input.buttons[brls::BUTTON_NAV_UP]))naturalScrollingCanScroll=true;
     brls::ScrollingFrame::draw(vg,x,y,w,h,style,ctx);
     if(automatic&&paging.canLoad()&&!scheduled&&CatalogPaging::nearBottom(getContentHeight(),getScrollingAreaHeight(),getContentOffsetY())){
       scheduled=true;auto flag=alive;const auto generation=paging.generation;brls::sync([this,flag,generation]{if(!*flag||generation!=paging.generation)return;scheduled=false;request();});
@@ -455,7 +463,7 @@ class HomeDashboard:public brls::Box{
   static brls::Label* label(const std::string& text,int size,NVGcolor color){auto* view=new brls::Label();view->setText(text);view->setFontSize(size);view->setTextColor(color);view->setHorizontalAlign(brls::HorizontalAlign::LEFT);return view;}
   static ClickableBox* button(const std::string& text,float width,std::function<void()> fn){auto* box=new ClickableBox(brls::Axis::COLUMN);box->setWidth(width);box->setHeight(46);box->setShrink(0);box->setHideHighlightBackground(true);box->setHighlightCornerRadius(12);box->setPadding(10);box->setCornerRadius(12);auto* textView=label(text,18,nvgRGB(223,221,229));textView->setHorizontalAlign(brls::HorizontalAlign::CENTER);box->addView(textView);box->registerClickAction([fn](brls::View*){fn();return true;});return box;}
   void selectRail(int selected){section=selected;for(size_t i=0;i<rail.size();i++){rail[i]->setBackgroundColor(i==size_t(section)?nvgRGB(44,29,29):nvgRGBA(0,0,0,0));railLabels[i]->setTextColor(i==size_t(section)?nvgRGB(255,121,101):nvgRGB(169,167,179));railIcons[i]->setActive(i==size_t(section));}filters->setVisibility(section==0?brls::Visibility::VISIBLE:brls::Visibility::GONE);}
-  void wireNavigation(){const auto& tiles=catalog->tiles();for(size_t i=0;i<tiles.size();i++){if(i<4&&!chips.empty()&&section==0)tiles[i]->setCustomNavigationRoute(brls::FocusDirection::UP,chips[selectedTab]);if(i%4==0)tiles[i]->setCustomNavigationRoute(brls::FocusDirection::LEFT,rail[section]);}if(!tiles.empty()){rail[section]->setCustomNavigationRoute(brls::FocusDirection::RIGHT,tiles.front());for(auto* chip:chips)chip->setCustomNavigationRoute(brls::FocusDirection::DOWN,tiles.front());}}
+  void wireNavigation(){const auto& tiles=catalog->tiles();for(size_t i=0;i<tiles.size();i++){if(i<4&&!chips.empty()&&section==0)tiles[i]->setCustomNavigationRoute(brls::FocusDirection::UP,chips[selectedTab]);if(i%4==0)tiles[i]->setCustomNavigationRoute(brls::FocusDirection::LEFT,rail[section]);}if(!tiles.empty()){rail[section]->setCustomNavigationRoute(brls::FocusDirection::RIGHT,tiles.front());for(auto* chip:chips)chip->setCustomNavigationRoute(brls::FocusDirection::DOWN,tiles.front());}else{rail[section]->setCustomNavigationRoute(brls::FocusDirection::RIGHT,catalog->tail());if(section==0){for(auto* chip:chips)chip->setCustomNavigationRoute(brls::FocusDirection::DOWN,catalog->tail());catalog->tail()->setCustomNavigationRoute(brls::FocusDirection::UP,chips[selectedTab]);}else catalog->tail()->setCustomNavigationRoute(brls::FocusDirection::UP,rail[section]);}}
   void disconnectGrid(){for(auto* chip:chips)chip->setCustomNavigationRoute(brls::FocusDirection::DOWN,chip);for(auto* item:rail)item->setCustomNavigationRoute(brls::FocusDirection::RIGHT,section==0?static_cast<brls::View*>(chips[selectedTab]):static_cast<brls::View*>(item));}
   void loadCatalog(){selectRail(0);brls::Application::giveFocus(chips[selectedTab]);disconnectGrid();const auto type=category;trace("home:category:"+type);catalog->reset([type](int page){return backend->call("home",Json::array({page,type}));});}
   void showSaved(int which){brls::Application::giveFocus(rail[which]);disconnectGrid();selectRail(which);Json items=Json::array();if(which==1)items=library["favorites"];else for(const auto& row:library["history"])items.push_back(row.value("series",Json::object()));catalog->showSaved(items,which==1?"还没有追剧，进入剧集详情即可收藏":"暂无观看记录，选一部好剧开始吧");}

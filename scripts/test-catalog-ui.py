@@ -18,12 +18,18 @@ def click(x,y):
     sp.run(['xdotool','mousemove',str(x),str(y),'mousedown','1'],check=True);time.sleep(.1)
     sp.run(['xdotool','mouseup','1'],check=True);time.sleep(.3)
 for screen in ['home','search']:
+    trace.unlink(missing_ok=True)
     output=Path(f'build/catalog-{screen}.log').open('w')
     process=sp.Popen(['build-preview/hongguo-preview'],env={**os.environ,'HONGGUO_PREVIEW_SCREEN':screen,'HONGGUO_UI_TEST':'1'},stdout=output,stderr=sp.STDOUT)
     try:
         wait_for(lambda text:'catalog:page=1:added=18:total=18' in text)
-        window=sp.check_output(['xdotool','search','--onlyvisible','--pid',str(process.pid)],text=True).splitlines()[0]
-        sp.run(['xdotool','windowfocus','--sync',window],check=True)
+        windows=[]
+        def window_ready(_):
+            result=sp.run(['xdotool','search','--onlyvisible','--pid',str(process.pid)],text=True,capture_output=True)
+            windows[:]=result.stdout.splitlines()
+            return bool(windows)
+        wait_for(window_ready)
+        sp.run(['xdotool','windowfocus','--sync',windows[0]],check=True)
         if screen=='home':
             # Tabs stay fixed above the scroll viewport. Select Latest then enter the grid.
             click(230,125);key('Down')

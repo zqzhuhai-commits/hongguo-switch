@@ -31,7 +31,7 @@ struct Worker {
 };
 Worker api("api_worker"),poster("poster_worker");
 }
-void resetTrace(){std::lock_guard<std::mutex> guard(logMutex);if(auto* f=std::fopen(logPath,"w")){std::fputs("hongguo-switch 1.1.1\n",f);std::fclose(f);}}
+void resetTrace(){std::lock_guard<std::mutex> guard(logMutex);if(auto* f=std::fopen(logPath,"w")){std::fputs("hongguo-switch 1.1.3\n",f);std::fclose(f);}}
 void trace(const std::string& stage){std::lock_guard<std::mutex> guard(logMutex);if(auto* f=std::fopen(logPath,"a")){std::fprintf(f,"%llu %s\n",(unsigned long long)armGetSystemTick(),stage.c_str());std::fclose(f);}}
 bool startWorkers(){if(!api.start())return false;if(!poster.start()){api.stop();return false;}return true;}
 void stopWorkers(){poster.stop();api.stop();}

@@ -1,4 +1,27 @@
-# 红果短剧 Switch 1.1.2 正式版
+# 红果短剧 Switch 1.1.3 正式版
+
+用户已于 2026-10-19 确认可以正式发布。安装程序与已交付的 1.1.3 测试版一致。
+
+[下载 NSP](https://github.com/zqzhuhai-commits/hongguo-switch/releases/download/v1.1.3/Hongguo-Switch-1.1.3.nsp) · [完整安装包](https://github.com/zqzhuhai-commits/hongguo-switch/releases/download/v1.1.3/Hongguo-Switch-1.1.3-Install.zip) · [正式发布说明](https://github.com/zqzhuhai-commits/hongguo-switch/releases/tag/v1.1.3) · [全部界面截图](https://github.com/zqzhuhai-commits/hongguo-switch/releases/download/v1.1.3/Hongguo-Switch-1.1.3-UI-Screenshots.zip)
+
+## 本版更新
+
+- 首页和搜索结果改为滚动接近底部自动加载，保留已有短剧、焦点与滚动位置。
+- 「最新」放在最前并默认选中，「全部」放在最后。切换分类或刷新返回顶部。
+- 去重、防止旧请求覆盖、失败重试、到底停止加载；修复手柄下移及列表焦点，释放远处封面纹理。
+- 保留封面与后续分集播放、软硬解码选择和 MPV 标准 / 兼容模式。
+
+![线上首页：最新在前，全部在后](docs/images/1.1.3/home.png)
+![自动加载更多短剧（演示数据）](docs/images/1.1.3/infinite.png)
+
+以上为共用原生界面的桌面截图，非 Switch 实机截屏。
+
+首页和搜索各连续 3 页验证通过，线上目录 3 页共 54 部不同短剧；协议、原生测试、Switch 构建、4 个分集真实音视频解码、4 张 HEIC 封面及播放画面检查通过。[构建与测试](https://github.com/zqzhuhai-commits/hongguo-switch/actions/runs/39184006767) · [验证记录](dist/formal-1.1.3/verification.json)
+
+直接安装 NSP，或将 NRO 放入 SD 卡 switch 目录并使用完整内存模式启动。Title ID 及本机配置、观看记录路径保持一致。
+
+## 1.1.2 历史发布记录
+
 
 用户已于 2026-10-18 确认 **1.1.2 实机通过**。正式版沿用已测试的程序内容，安装包与交付测试版一致。
 
@@ -118,3 +141,7 @@ g++ -std=c++17 -Inative tests/app_config.cpp -o /tmp/config && /tmp/config
 - MPV 兼容模式：32 MiB 缓冲、关闭直接渲染，可用于排查黑屏或花屏。
 
 目前只集成 MPV 内核，这两个模式不是不同播放器内核，尚未集成 VLC 等第二内核。用户已确认 1.1.2 实机通过。
+
+## 1.1.3 列表浏览更新（待实机确认）
+
+首页分类与搜索结果取消「下一页」，接近底部自动追加更多剧集，保留旧卡片、焦点与滚动位置。切换分类或刷新时回到顶部；「最新」排在最前并默认显示，「全部」移至最后。加载失败保留当前列表，可在底部按 A 或触摸重试；剧集按 ID 去重，返回空列表或结束标记后停止。远离屏幕的封面纹理会释放，回滚时按需加载。

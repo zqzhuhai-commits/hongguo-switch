@@ -1,0 +1,25 @@
+{
+  "commit": "86a28a9d5209fa7fbb18d37c6b20fc1097567958",
+  "passed": true,
+  "pages": [
+    {
+      "page": 1,
+      "items": 18,
+      "added": 18,
+      "hasMore": true
+    },
+    {
+      "page": 2,
+      "items": 18,
+      "added": 18,
+      "hasMore": true
+    },
+    {
+      "page": 3,
+      "items": 18,
+      "added": 18,
+      "hasMore": true
+    }
+  ],
+  "hardwareTested": false
+}

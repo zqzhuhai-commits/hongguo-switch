@@ -1,0 +1,29 @@
+{
+  "version": "1.1.3",
+  "commit": "86a28a9d5209fa7fbb18d37c6b20fc1097567958",
+  "titleId": "0100F00D53414600",
+  "sha256": "31e34417e4e75839a15103f6f407c8ae0c8d5ffe0084c6cd5ff7678a0c358fb9",
+  "bytes": 21824216,
+  "archiveChecksPassed": true,
+  "hardwareTested": false,
+  "contents": [
+    {
+      "file": "c862f5406836756312cad567b57daab1.nca",
+      "bytes": 21669888,
+      "sha256": "c862f5406836756312cad567b57daab1ba8ae830bb07ebaaa8999ca3135e882d",
+      "contentType": 0
+    },
+    {
+      "file": "0130a7d8d465ad562e561afb437752a0.cnmt.nca",
+      "bytes": 19968,
+      "sha256": "0130a7d8d465ad562e561afb437752a08070a7fa419e0c2a5fbe6298595e8a49",
+      "contentType": 1
+    },
+    {
+      "file": "22b2198b0de393ef65f67fa4e88a6e4b.nca",
+      "bytes": 134144,
+      "sha256": "22b2198b0de393ef65f67fa4e88a6e4b8e3489b8a14365a2bb278bbe24956c2f",
+      "contentType": 2
+    }
+  ]
+}

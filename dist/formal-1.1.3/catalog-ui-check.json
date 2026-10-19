@@ -1,0 +1,21 @@
+{
+  "commit": "86a28a9d5209fa7fbb18d37c6b20fc1097567958",
+  "passed": true,
+  "hardwareTested": false,
+  "screens": {
+    "home": {
+      "passed": true,
+      "uniqueItems": 42,
+      "lastPage": 3,
+      "offsetPreserved": true,
+      "endStopped": true
+    },
+    "search": {
+      "passed": true,
+      "uniqueItems": 42,
+      "lastPage": 3,
+      "offsetPreserved": true,
+      "endStopped": true
+    }
+  }
+}

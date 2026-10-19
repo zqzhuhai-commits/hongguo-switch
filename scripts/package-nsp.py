@@ -5,6 +5,8 @@ p.add_argument('--package',required=True,type=pathlib.Path)
 p.add_argument('--probe',required=True,type=pathlib.Path)
 p.add_argument('--video-frames',required=True,type=pathlib.Path)
 p.add_argument('--covers',required=True,type=pathlib.Path)
+p.add_argument('--catalog',required=True,type=pathlib.Path)
+p.add_argument('--catalog-ui',required=True,type=pathlib.Path)
 p.add_argument('--keyset',required=True,type=pathlib.Path)
 p.add_argument('--tool',default='hacbrewpack')
 p.add_argument('--output',required=True,type=pathlib.Path)
@@ -20,6 +22,10 @@ if not (covers.get('commit')==commit and covers.get('decodePassed') and covers.g
 video=json.loads(a.video_frames.read_text())
 if not (video.get('commit')==commit and video.get('displayPassed') and {'player','player-menu'}.issubset(set(video.get('screens',{})))):
     raise SystemExit('Native video display verification did not pass for this commit; NSP was not generated.')
+for path in [a.catalog,a.catalog_ui]:
+    check=json.loads(path.read_text())
+    if not(check.get('commit')==commit and check.get('passed')):
+        raise SystemExit('Catalog scrolling or live pagination did not pass for this commit; NSP was not generated.')
 if not a.keyset.is_file():raise SystemExit('NSP requires a local keyset file containing header_key and key_area_key_application_00.')
 for path in ['exefs/main','exefs/main.npdm','control/control.nacp']:
     if not (a.package/path).is_file():raise SystemExit('Incomplete Switch package inputs: '+path)
